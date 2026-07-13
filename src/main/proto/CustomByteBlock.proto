@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package CustomByteBlock;
+
+option java_package = "com.mqttclient.protobuf.gen";
+option java_outer_classname = "CustomByteBlockProto";
+
+message CustomByteBlock {
+    bytes data = 1;
+}

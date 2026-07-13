@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package RobotPosition;
+
+option java_package = "com.mqttclient.protobuf.gen";
+option java_outer_classname = "RobotPositionProto";
+
+message RobotPosition {
+  optional float x = 1;
+  optional float y = 2;
+  optional float z = 3;
+  optional float yaw = 4;
+  optional uint32 robot_id = 5;
+}
