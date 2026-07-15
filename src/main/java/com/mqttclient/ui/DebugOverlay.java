@@ -113,9 +113,6 @@ public class DebugOverlay extends JPanel {
         RoundRectangle2D bg = new RoundRectangle2D.Float(10, 10, panelW, panelH, 18, 18);
         g2.setColor(PANEL_BG);
         g2.fill(bg);
-        g2.setColor(new Color(0x40c4ff));
-        g2.setStroke(new java.awt.BasicStroke(1.4f));
-        g2.draw(bg);
 
         int x = 28;
         int y = 40;

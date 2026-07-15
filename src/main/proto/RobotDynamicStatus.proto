@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package RobotDynamicStatus;
+
+option java_package = "com.mqttclient.protobuf.gen";
+option java_outer_classname = "RobotDynamicStatusProto";
+
+message RobotDynamicStatus {
+optional uint32 current_health = 1;
+optional float current_heat = 2;
+optional float last_projectile_fire_rate = 3;
+optional uint32 current_chassis_energy = 4;
+optional uint32 current_buffer_energy = 5;
+optional uint32 current_experience = 6;
+optional uint32 experience_for_upgrade = 7;
+optional uint32 total_projectiles_fired = 8;
+optional uint32 remaining_ammo = 9;
+optional bool is_out_of_combat = 10;
+optional uint32 out_of_combat_countdown = 11;
+optional bool can_remote_heal = 12;
+optional bool can_remote_ammo = 13;
+}

@@ -42,6 +42,12 @@ public class MqttReceiver implements MqttCallback {
     /** 机器人位置消息回调（收到 {@link Constants#ROBOT_POSITION_TOPIC} 主题的原始 payload）。 */
     private java.util.function.Consumer<byte[]> robotPositionListener;
 
+    /** 机器人静态状态回调（robot_type / level / max_health / max_heat）。 */
+    private java.util.function.Consumer<byte[]> robotStaticStatusListener;
+
+    /** 机器人动态状态回调（current_health / current_heat / current_experience / experience_for_upgrade）。 */
+    private java.util.function.Consumer<byte[]> robotDynamicStatusListener;
+
     public MqttReceiver(String brokerHost, int brokerPort, String clientId) {
         this.brokerHost = brokerHost;
         this.brokerPort = brokerPort;
@@ -55,6 +61,16 @@ public class MqttReceiver implements MqttCallback {
     /** 注册机器人位置监听器；收到位置主题消息时以原始 payload 回调（在 Paho 网络线程执行）。 */
     public void setRobotPositionListener(java.util.function.Consumer<byte[]> listener) {
         this.robotPositionListener = listener;
+    }
+
+    /** 注册机器人静态状态监听器。 */
+    public void setRobotStaticStatusListener(java.util.function.Consumer<byte[]> listener) {
+        this.robotStaticStatusListener = listener;
+    }
+
+    /** 注册机器人动态状态监听器。 */
+    public void setRobotDynamicStatusListener(java.util.function.Consumer<byte[]> listener) {
+        this.robotDynamicStatusListener = listener;
     }
 
     public BlockingQueue<byte[]> getMessageQueue() {
@@ -164,13 +180,33 @@ public class MqttReceiver implements MqttCallback {
     @Override
     public void messageArrived(String topic, MqttMessage message) {
         byte[] payload = message.getPayload();
-        // 机器人位置走独立回调，不进入视频队列
+        // 机器人状态走独立回调，不进入视频队列
         if (Constants.ROBOT_POSITION_TOPIC.equals(topic)) {
             if (robotPositionListener != null) {
                 try {
                     robotPositionListener.accept(payload);
                 } catch (Exception e) {
                     System.out.printf("[MQTT] 机器人位置回调异常: %s%n", e.getMessage());
+                }
+            }
+            return;
+        }
+        if (Constants.ROBOT_STATIC_STATUS_TOPIC.equals(topic)) {
+            if (robotStaticStatusListener != null) {
+                try {
+                    robotStaticStatusListener.accept(payload);
+                } catch (Exception e) {
+                    System.out.printf("[MQTT] 机器人静态状态回调异常: %s%n", e.getMessage());
+                }
+            }
+            return;
+        }
+        if (Constants.ROBOT_DYNAMIC_STATUS_TOPIC.equals(topic)) {
+            if (robotDynamicStatusListener != null) {
+                try {
+                    robotDynamicStatusListener.accept(payload);
+                } catch (Exception e) {
+                    System.out.printf("[MQTT] 机器人动态状态回调异常: %s%n", e.getMessage());
                 }
             }
             return;

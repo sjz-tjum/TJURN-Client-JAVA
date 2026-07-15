@@ -29,16 +29,21 @@ public final class Constants {
     public static final double DISPLAY_SCALE = 0.5;
 
     // ==== MQTT 配置 (对应 main_window.py) ====
-    public static final String DEFAULT_BROKER_HOST = "192.168.12.1";
-    public static final int DEFAULT_BROKER_PORT = 3333;
+    // public static final String DEFAULT_BROKER_HOST = "192.168.12.1";
+    // public static final int DEFAULT_BROKER_PORT = 3333;
+    public static final String DEFAULT_BROKER_HOST = "broker.emqx.io";
+    public static final int DEFAULT_BROKER_PORT = 1883;
     public static final String DEFAULT_LOCAL_IP = "192.168.12.2";
     public static final int MQTT_KEEPALIVE_SECONDS = 60;
     public static final int MESSAGE_QUEUE_CAPACITY = 500;
 
     /** 订阅主题 */
     public static final String ROBOT_POSITION_TOPIC = "RobotPosition";
+    public static final String ROBOT_STATIC_STATUS_TOPIC = "RobotStaticStatus";
+    public static final String ROBOT_DYNAMIC_STATUS_TOPIC = "RobotDynamicStatus";
     public static final String VIDEO_TOPIC = "CustomByteBlock";
-    public static final String[] SUBSCRIBE_TOPICS = { VIDEO_TOPIC, "/video/#", ROBOT_POSITION_TOPIC};
+    public static final String[] SUBSCRIBE_TOPICS = { VIDEO_TOPIC, "/video/#", ROBOT_POSITION_TOPIC,
+            ROBOT_STATIC_STATUS_TOPIC, ROBOT_DYNAMIC_STATUS_TOPIC};
     public static final int QOS = 0;
 
     // ==== 缓冲区与解码 ====

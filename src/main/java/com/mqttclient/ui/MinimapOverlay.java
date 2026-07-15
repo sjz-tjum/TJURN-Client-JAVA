@@ -419,7 +419,7 @@ public class MinimapOverlay extends JPanel {
         }
     }
 
-    /** 一次布局计算结果：面板矩形、地图矩形、缩放手柄矩形。*/
+    /** 一次布局计算结果：面板矩形、地图矩形、缩放手柄矩形。 */
     private static final class Layout {
         final Rectangle panel;
         final int mapX, mapY, mapW, mapH;
@@ -521,6 +521,13 @@ public class MinimapOverlay extends JPanel {
         yawRad += m.yawOffsetRad;
         this.pose = new Pose(x, y, yawRad);
         repaint();
+    }
+
+    /**
+     * 设置机器人位姿（含 robotId，兼容调用方，忽略 ID）。线程安全。
+     */
+    public void setRobotPosition(double x, double y, double yaw, int robotId) {
+        setRobotPosition(x, y, yaw);
     }
 
     /** 清除机器人位置（回到「等待定位」状态）。 */
@@ -755,6 +762,8 @@ public class MinimapOverlay extends JPanel {
      *
      * <p>坐标映射：世界 (x, y) 米 → 地图矩形内像素。世界 +X 向右、+Y 向上；
      * 屏幕 Y 向下，因此纵轴翻转。yaw 以弧度、CCW 自 +X 轴起算。朝向标记大小随地图缩放。
+     *
+     * <p>标记形状为<b>水滴形</b>（尖端指向前方），尖端正上方显示机器人 ID。
      */
     private String drawRobot(Graphics2D g2, MapModel m, Pose p, int mapX, int mapY, int mapW, int mapH) {
         double wx = p.x + m.originOffsetX;
@@ -767,32 +776,40 @@ public class MinimapOverlay extends JPanel {
         double sy = mapY + mapH - fy * mapH;   // 纵轴翻转
 
         // 标记大小随地图宽度自适应
-        double len = Math.max(10, mapW * 0.05);
-        double halfBase = len * 0.45;
+        double len = Math.max(12, mapW * 0.028);
+        double yawDeg = Math.toDegrees(p.yawRad);
 
+        // ── 水滴形路径（尖端指向 +X 方向）──
+        // 使用两条贝塞尔曲线：尖端→上方鼓腹→收尾→下方鼓腹→尖端
         double screenAngle = -p.yawRad;
         AffineTransform old = g2.getTransform();
         g2.translate(sx, sy);
         g2.rotate(screenAngle);
 
-        Path2D tri = new Path2D.Double();
-        tri.moveTo(len, 0);          // 尖端（朝向）
-        tri.lineTo(-halfBase, -halfBase);
-        tri.lineTo(-halfBase, halfBase);
-        tri.closePath();
+        Path2D drop = new Path2D.Double();
+        drop.moveTo(len, 0);           // 尖端
+        drop.curveTo(len * 0.1, len * 0.55,
+                     -len * 0.6, len * 0.45,
+                     -len * 0.35, 0);    // 上方曲线到收尾
+        drop.curveTo(-len * 0.6, -len * 0.45,
+                     len * 0.1, -len * 0.55,
+                     len, 0);            // 下方曲线回到尖端
+        drop.closePath();
+
         g2.setColor(ROBOT);
-        g2.fill(tri);
+        g2.fill(drop);
         g2.setColor(ROBOT_EDGE);
         g2.setStroke(new BasicStroke(1.2f));
-        g2.draw(tri);
+        g2.draw(drop);
+
+        // ── 中心亮点 ──
+        double r = Math.max(2.5, len * 0.16);
+        g2.fill(new Ellipse2D.Double(-r, -r, 2 * r, 2 * r));
+
         g2.setTransform(old);
 
-        double r = Math.max(2.5, len * 0.18);
-        g2.setColor(ROBOT_EDGE);
-        g2.fill(new Ellipse2D.Double(sx - r, sy - r, 2 * r, 2 * r));
-
-        double yawDeg = Math.toDegrees(p.yawRad);
-        return String.format("x=%.2f  y=%.2f  yaw=%.0f°", p.x, p.y, yawDeg);
+        return String.format("x=%.2f  y=%.2f  yaw=%.0f°",
+                p.x, p.y, yawDeg);
     }
 
     /** 左上角缩放手柄：角标 + 斜向条纹，提示可拖动。 */

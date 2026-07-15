@@ -429,7 +429,10 @@ package com.mqttclient.ui;
 import com.mqttclient.config.Constants;
 import com.mqttclient.mqtt.MqttReceiver;
 import com.mqttclient.protobuf.RobotPositionParser;
+import com.mqttclient.protobuf.RobotStatusParser;
+import com.mqttclient.protobuf.gen.RobotDynamicStatusProto.RobotDynamicStatus;
 import com.mqttclient.protobuf.gen.RobotPositionProto.RobotPosition;
+import com.mqttclient.protobuf.gen.RobotStaticStatusProto.RobotStaticStatus;
 import com.mqttclient.video.VideoProcessor;
 
 import javax.swing.AbstractAction;
@@ -474,6 +477,7 @@ public class MainWindow extends JFrame {
     private final DebugOverlay debugOverlay = new DebugOverlay();
     private final MinimapOverlay minimapOverlay = new MinimapOverlay();
     private final ControlMenuOverlay controlMenu = new ControlMenuOverlay();
+    private final StatBarOverlay statBar = new StatBarOverlay();
     private final JTextArea logArea;
 
     // 分层容器
@@ -518,8 +522,9 @@ public class MainWindow extends JFrame {
         refreshOverlayVisibility();
 
         appendLog("程序启动，等待 MQTT 连接...");
-        appendLog("按键: ESC=控制菜单  F3=调试数据  F4=常驻显示  +/-=小地图缩放");
+        appendLog("按键: ESC=控制菜单  F3=调试  F4=常驻  +/-=小地图缩放  1-6=控制功能");
         appendLog("小地图: 拖动左上角手柄或滚轮缩放，双击全屏/还原");
+        appendLog("左下角状态面板: 显示机器人类型·等级·血量·热量·经验");
         // 启动后弹出客户端 ID 输入框
         SwingUtilities.invokeLater(this::askClientId);
     }
@@ -534,6 +539,7 @@ public class MainWindow extends JFrame {
         layeredPane.add(videoPanel, JLayeredPane.DEFAULT_LAYER);
         layeredPane.add(debugOverlay, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(minimapOverlay, JLayeredPane.PALETTE_LAYER);
+        layeredPane.add(statBar, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(controlMenu, JLayeredPane.MODAL_LAYER);
         // 小地图需要接收鼠标（拖动缩放 / 双击全屏），置于调试 HUD 之上以优先命中
         layeredPane.moveToFront(minimapOverlay);
@@ -573,6 +579,18 @@ public class MainWindow extends JFrame {
         im.put(KeyStroke.getKeyStroke("F3"), "toggleDebug");
         im.put(KeyStroke.getKeyStroke("F4"), "togglePinned");
 
+        // F3 按住显示调试，松手消失
+        im.put(KeyStroke.getKeyStroke("F3"), "showDebug");
+        im.put(KeyStroke.getKeyStroke("released F3"), "hideDebug");
+
+        // 控制面板快捷键：数字 1~6 直接触发，无需先按 ESC
+        im.put(KeyStroke.getKeyStroke("1"), "cmdConnect");
+        im.put(KeyStroke.getKeyStroke("2"), "cmdDisconnect");
+        im.put(KeyStroke.getKeyStroke("3"), "cmdStart");
+        im.put(KeyStroke.getKeyStroke("4"), "cmdStop");
+        im.put(KeyStroke.getKeyStroke("5"), "cmdClearLog");
+        im.put(KeyStroke.getKeyStroke("6"), "cmdChangeId");
+
         // 小地图缩放：+ / = 放大，- / _ 缩小（含小键盘）
         im.put(KeyStroke.getKeyStroke("typed +"), "minimapZoomIn");
         im.put(KeyStroke.getKeyStroke("typed ="), "minimapZoomIn");
@@ -587,16 +605,58 @@ public class MainWindow extends JFrame {
                 toggleControlMenu();
             }
         });
-        am.put("toggleDebug", new AbstractAction() {
+        am.put("showDebug", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                toggleDebugTemp();
+                showDebug();
+            }
+        });
+        am.put("hideDebug", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                hideDebug();
             }
         });
         am.put("togglePinned", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 toggleDebugPinned();
+            }
+        });
+        am.put("cmdConnect", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                controlMenu.btnConnect.doClick();
+            }
+        });
+        am.put("cmdDisconnect", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                controlMenu.btnDisconnect.doClick();
+            }
+        });
+        am.put("cmdStart", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                controlMenu.btnStart.doClick();
+            }
+        });
+        am.put("cmdStop", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                controlMenu.btnStop.doClick();
+            }
+        });
+        am.put("cmdClearLog", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                controlMenu.btnClearLog.doClick();
+            }
+        });
+        am.put("cmdChangeId", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                controlMenu.btnChangeId.doClick();
             }
         });
         am.put("minimapZoomIn", new AbstractAction() {
@@ -640,8 +700,15 @@ public class MainWindow extends JFrame {
         }
     }
 
-    private void toggleDebugTemp() {
-        debugTemp = !debugTemp;
+    /** F3 按下 → 显示调试面板。 */
+    private void showDebug() {
+        debugTemp = true;
+        refreshOverlayVisibility();
+    }
+
+    /** F3 松开 → 隐藏调试面板（除非已 F4 锁定）。 */
+    private void hideDebug() {
+        debugTemp = false;
         refreshOverlayVisibility();
     }
 
@@ -672,6 +739,8 @@ public class MainWindow extends JFrame {
         mqtt.setConnectionStatusListener((ok, msg) ->
                 SwingUtilities.invokeLater(() -> onMqttStatusChanged(ok, msg)));
         mqtt.setRobotPositionListener(this::onRobotPosition);
+        mqtt.setRobotStaticStatusListener(this::onRobotStaticStatus);
+        mqtt.setRobotDynamicStatusListener(this::onRobotDynamicStatus);
 
         if (mqtt.connect()) {
             appendLog("MQTT 连接请求已发送，等待确认...");
@@ -705,9 +774,40 @@ public class MainWindow extends JFrame {
             double x = pos.getX();
             double y = pos.getY();
             double yaw = pos.getYaw();
-            SwingUtilities.invokeLater(() -> minimapOverlay.setRobotPosition(x, y, yaw));
+            int robotId = pos.hasRobotId() ? pos.getRobotId() : 0;
+            SwingUtilities.invokeLater(() -> minimapOverlay.setRobotPosition(x, y, yaw, robotId));
         } catch (Exception e) {
             SwingUtilities.invokeLater(() -> appendLog("机器人位置解析失败: " + e.getMessage()));
+        }
+    }
+
+    /** 收到机器人静态状态（Paho 线程）：解析 protobuf 并在 EDT 刷新状态面板。 */
+    private void onRobotStaticStatus(byte[] payload) {
+        try {
+            RobotStaticStatus s = RobotStatusParser.parseStaticStatus(payload);
+            int type = s.hasRobotType() ? s.getRobotType() : 0;
+            int lv = s.hasLevel() ? s.getLevel() : 0;
+            int hp = s.hasMaxHealth() ? s.getMaxHealth() : 100;
+            int heat = s.hasMaxHeat() ? s.getMaxHeat() : 100;
+            SwingUtilities.invokeLater(() ->
+                    statBar.setStaticStatus(type, lv, hp, heat));
+        } catch (Exception e) {
+            SwingUtilities.invokeLater(() -> appendLog("静态状态解析失败: " + e.getMessage()));
+        }
+    }
+
+    /** 收到机器人动态状态（Paho 线程）：解析 protobuf 并在 EDT 刷新状态面板。 */
+    private void onRobotDynamicStatus(byte[] payload) {
+        try {
+            RobotDynamicStatus d = RobotStatusParser.parseDynamicStatus(payload);
+            int hp = d.hasCurrentHealth() ? d.getCurrentHealth() : 0;
+            float heat = d.hasCurrentHeat() ? d.getCurrentHeat() : 0f;
+            int xp = d.hasCurrentExperience() ? d.getCurrentExperience() : 0;
+            int xpMax = d.hasExperienceForUpgrade() ? d.getExperienceForUpgrade() : 100;
+            SwingUtilities.invokeLater(() ->
+                    statBar.setDynamicStatus(hp, heat, xp, xpMax));
+        } catch (Exception e) {
+            SwingUtilities.invokeLater(() -> appendLog("动态状态解析失败: " + e.getMessage()));
         }
     }
 

@@ -74,15 +74,25 @@ public class StreamBuffer {
     /**
      * 查找 Annex-B 起始码（0x000001 或 0x00000001），返回起始位置，未找到返回 -1。
      * 对应 Python 版的 _find_start_code / _find_nal_start_code。
+     *
+     * <p>注意：4 字节起始码 {@code 0x00000001} 内部包含 3 字节子串 {@code 0x000001}。
+     * 本方法优先匹配 4 字节起始码；当在位置 {@code i} 检测到 3 字节起始码时，
+     * 会检查前一字节是否为 0，若是则跳过（该位置属于 4 字节起始码的尾部）。
      */
     public int findStartCode(int start) {
         for (int i = Math.max(0, start); i < size - 3; i++) {
             if (data[i] == 0 && data[i + 1] == 0) {
-                if (data[i + 2] == 1) {
-                    return i; // 3 字节起始码
-                }
+                // 4 字节起始码 0x00000001
                 if (data[i + 2] == 0 && data[i + 3] == 1) {
-                    return i; // 4 字节起始码
+                    return i;
+                }
+                // 3 字节起始码 0x000001
+                if (data[i + 2] == 1) {
+                    // 跳过嵌入在 4 字节起始码尾部的假 3 字节码
+                    if (i > 0 && data[i - 1] == 0) {
+                        continue;
+                    }
+                    return i;
                 }
             }
         }
