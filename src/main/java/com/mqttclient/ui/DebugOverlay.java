@@ -43,6 +43,7 @@ public class DebugOverlay extends JPanel {
     private String status = "未连接";
     private String clientId = "";
     private String stats = "包: 0 | 帧: 0 | FPS: 0.0";
+    private String sourceLabel = "MQTT";
     private boolean pinned = false;
 
     // 内嵌日志区
@@ -95,6 +96,11 @@ public class DebugOverlay extends JPanel {
         repaint();
     }
 
+    public void setSourceLabel(String label) {
+        this.sourceLabel = label;
+        repaint();
+    }
+
     public void setPinned(boolean pinned) {
         this.pinned = pinned;
         repaint();
@@ -120,7 +126,8 @@ public class DebugOverlay extends JPanel {
         // 标题
         g2.setFont(MONO_BOLD.deriveFont(16f));
         g2.setColor(TITLE_COLOR);
-        g2.drawString("H.264 视频接收器  [调试" + (pinned ? " · 常驻" : "") + "]", x, y);
+        g2.drawString("视频接收器 [" + sourceLabel + "]"
+                + (pinned ? " [常驻]" : ""), x, y);
         y += 28;
 
         // 连接信息

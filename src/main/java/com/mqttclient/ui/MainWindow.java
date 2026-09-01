@@ -427,13 +427,16 @@
 package com.mqttclient.ui;
 
 import com.mqttclient.config.Constants;
+import com.mqttclient.config.Config;
 import com.mqttclient.mqtt.MqttReceiver;
 import com.mqttclient.protobuf.RobotPositionParser;
 import com.mqttclient.protobuf.RobotStatusParser;
 import com.mqttclient.protobuf.gen.RobotDynamicStatusProto.RobotDynamicStatus;
 import com.mqttclient.protobuf.gen.RobotPositionProto.RobotPosition;
 import com.mqttclient.protobuf.gen.RobotStaticStatusProto.RobotStaticStatus;
+import com.mqttclient.video.UdpVideoProcessor;
 import com.mqttclient.video.VideoProcessor;
+import com.mqttclient.video.VideoStreamProcessor;
 
 import javax.swing.AbstractAction;
 import javax.swing.JComponent;
@@ -490,8 +493,10 @@ public class MainWindow extends JFrame {
 
     // 状态
     private MqttReceiver mqtt;
-    private VideoProcessor processor;
+    private VideoStreamProcessor processor;
+    private UdpVideoProcessor udpProcessor;
     private volatile boolean connected = false;
+    private volatile boolean udpActive = false;   // true=UDP, false=MQTT
     private String clientId = "";
     private Timer renderTimer;
 
@@ -509,6 +514,7 @@ public class MainWindow extends JFrame {
         initUi();
         installKeyBindings();
         wireControlMenu();
+        startConfigWatcher();
 
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
@@ -522,7 +528,8 @@ public class MainWindow extends JFrame {
         refreshOverlayVisibility();
 
         appendLog("程序启动，等待 MQTT 连接...");
-        appendLog("按键: ESC=控制菜单  F3=调试  F4=常驻  +/-=小地图缩放  1-6=控制功能");
+        appendLog("按键: 0=切换源 F5=重载配置 ESC=控制菜单 F3=调试 F4=常驻 +/-=缩放 1-6=控制");
+        appendLog("配置从 config.json 读取，修改后自动热重载 (F5 手动重载)");
         appendLog("小地图: 拖动左上角手柄或滚轮缩放，双击全屏/还原");
         appendLog("左下角状态面板: 显示机器人类型·等级·血量·热量·经验");
         // 启动后弹出客户端 ID 输入框
@@ -578,12 +585,14 @@ public class MainWindow extends JFrame {
         im.put(KeyStroke.getKeyStroke("ESCAPE"), "toggleMenu");
         im.put(KeyStroke.getKeyStroke("F3"), "toggleDebug");
         im.put(KeyStroke.getKeyStroke("F4"), "togglePinned");
+        im.put(KeyStroke.getKeyStroke("F5"), "reloadConfig");
 
         // F3 按住显示调试，松手消失
         im.put(KeyStroke.getKeyStroke("F3"), "showDebug");
         im.put(KeyStroke.getKeyStroke("released F3"), "hideDebug");
 
         // 控制面板快捷键：数字 1~6 直接触发，无需先按 ESC
+        im.put(KeyStroke.getKeyStroke("0"), "switchSource");
         im.put(KeyStroke.getKeyStroke("1"), "cmdConnect");
         im.put(KeyStroke.getKeyStroke("2"), "cmdDisconnect");
         im.put(KeyStroke.getKeyStroke("3"), "cmdStart");
@@ -599,6 +608,12 @@ public class MainWindow extends JFrame {
         im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ADD, 0), "minimapZoomIn");
         im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_SUBTRACT, 0), "minimapZoomOut");
 
+        am.put("switchSource", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                switchVideoSource();
+            }
+        });
         am.put("toggleMenu", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -621,6 +636,12 @@ public class MainWindow extends JFrame {
             @Override
             public void actionPerformed(ActionEvent e) {
                 toggleDebugPinned();
+            }
+        });
+        am.put("reloadConfig", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                onReloadConfig();
             }
         });
         am.put("cmdConnect", new AbstractAction() {
@@ -683,6 +704,8 @@ public class MainWindow extends JFrame {
             appendLog("日志已清空");
         });
         controlMenu.btnChangeId.addActionListener(e -> onChangeClientId());
+        controlMenu.btnSwitchSource.addActionListener(e -> switchVideoSource());
+        controlMenu.btnReloadConfig.addActionListener(e -> onReloadConfig());
         controlMenu.setOnScrimClick(this::toggleControlMenu);
 
         controlMenu.btnDisconnect.setEnabled(false);
@@ -827,6 +850,14 @@ public class MainWindow extends JFrame {
     }
 
     private void onStart() {
+        if (udpActive) {
+            startUdpProcessor();
+        } else {
+            startMqttProcessor();
+        }
+    }
+
+    private void startMqttProcessor() {
         if (!connected || mqtt == null) {
             appendLog("请先连接 MQTT");
             return;
@@ -835,11 +866,10 @@ public class MainWindow extends JFrame {
         processor.setStatusListener(msg -> SwingUtilities.invokeLater(() -> appendLog(msg)));
         processor.setStatsListener((packets, frames, decodeFps, displayFps, lost) ->
                 SwingUtilities.invokeLater(() -> debugOverlay.setStats(String.format(
-                        "包: %d | 帧: %d | 解码FPS: %.1f | 显示FPS: %.1f | 丢包: %d",
+                        "[MQTT] 包: %d | 帧: %d | 解码FPS: %.1f | 显示FPS: %.1f | 丢包: %d",
                         packets, frames, decodeFps, displayFps, lost))));
         processor.start();
 
-        // 渲染定时器：定时取最新帧刷新显示（对应 QTimer）
         renderTimer = new Timer(Constants.RENDER_INTERVAL_MS, e -> {
             BufferedImage frame = processor.takeLatestFrameForRender();
             if (frame != null) {
@@ -850,8 +880,93 @@ public class MainWindow extends JFrame {
 
         controlMenu.btnStart.setEnabled(false);
         controlMenu.btnStop.setEnabled(true);
-        setStatus("解码中...");
-        appendLog("视频处理线程已启动");
+        setStatus("MQTT 解码中...");
+        appendLog("MQTT 视频处理线程已启动");
+    }
+
+    private void startUdpProcessor() {
+        if (udpProcessor != null) {
+            udpProcessor.stopProcessor();
+        }
+        udpProcessor = new UdpVideoProcessor(Constants.UDP_HOST);
+        udpProcessor.setStatusListener(msg -> SwingUtilities.invokeLater(() -> appendLog(msg)));
+        udpProcessor.setStatsListener((packets, frames, decodeFps, displayFps, lost) ->
+                SwingUtilities.invokeLater(() -> debugOverlay.setStats(String.format(
+                        "[UDP] 包: %d | 帧: %d | 解码FPS: %.1f | 显示FPS: %.1f | 丢片: %d",
+                        packets, frames, decodeFps, displayFps, lost))));
+        udpProcessor.start();
+        processor = udpProcessor;
+
+        renderTimer = new Timer(Constants.RENDER_INTERVAL_MS, e -> {
+            BufferedImage frame = processor.takeLatestFrameForRender();
+            if (frame != null) {
+                videoPanel.setImage(frame);
+            }
+        });
+        renderTimer.start();
+
+        controlMenu.btnStart.setEnabled(false);
+        controlMenu.btnStop.setEnabled(true);
+        setStatus("UDP HEVC 解码中...");
+        appendLog("UDP 视频处理线程已启动 (" + Constants.UDP_HOST + ":" + Constants.UDP_PORT + ")");
+    }
+
+    /** 切换 MQTT ↔ UDP 视频源。 */
+    private void switchVideoSource() {
+        // 停止当前处理器
+        if (renderTimer != null) {
+            renderTimer.stop();
+            renderTimer = null;
+        }
+        if (processor != null) {
+            processor.stopProcessor();
+            processor = null;
+        }
+
+        udpActive = !udpActive;
+
+        String label = udpActive ? "UDP" : "MQTT";
+        appendLog("视频源已切换至: " + label);
+        debugOverlay.setSourceLabel(label);
+
+        if (udpActive) {
+            startUdpProcessor();
+        } else if (connected && mqtt != null) {
+            startMqttProcessor();
+        } else {
+            appendLog("MQTT 未连接，请先连接后再启动");
+            controlMenu.btnStart.setEnabled(true);
+            controlMenu.btnStop.setEnabled(false);
+        }
+    }
+
+    /** 重新加载 config.json（F5 或控制菜单"重载配置"）。 */
+    private void onReloadConfig() {
+        Constants.reload();
+        appendLog("配置已重新加载");
+        debugOverlay.repaint();
+        appendLog("提示: MQTT 连接参数需重连生效；UDP/缓冲/分辨率参数需停止后再启动生效");
+    }
+
+    /** 后台监听 config.json 变化，自动热重载（每 2 秒轮询一次修改时间）。 */
+    private void startConfigWatcher() {
+        Thread watcher = new Thread(() -> {
+            long last = Config.lastModified();
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                long now = Config.lastModified();
+                if (now != last && now != 0) {
+                    last = now;
+                    SwingUtilities.invokeLater(this::onReloadConfig);
+                }
+            }
+        }, "config-watcher");
+        watcher.setDaemon(true);
+        watcher.start();
     }
 
     private void onStop() {
@@ -863,7 +978,7 @@ public class MainWindow extends JFrame {
             processor.stopProcessor();
             processor = null;
         }
-        controlMenu.btnStart.setEnabled(connected);
+        controlMenu.btnStart.setEnabled(connected || udpActive);
         controlMenu.btnStop.setEnabled(false);
         setStatus("解码已停止");
         appendLog("视频处理线程已停止");
@@ -910,6 +1025,10 @@ public class MainWindow extends JFrame {
     private void onClose() {
         appendLog("正在关闭程序...");
         onStop();
+        if (udpProcessor != null) {
+            udpProcessor.stopProcessor();
+            udpProcessor = null;
+        }
         if (mqtt != null) {
             mqtt.disconnect();
         }

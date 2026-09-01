@@ -1,0 +1,19 @@
+# Maven 构建输出
+target/
+
+# IDE 配置
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 测试数据（下载/本机生成，不入库）
+test_sample.hevc
+*.hevc
+屏幕录制*.mp4

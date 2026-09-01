@@ -1,0 +1,46 @@
+{
+  "broker": {
+    "host": "0.0.0.0",
+    "port": 11883,
+    "verbose": false
+  },
+  "mqtt": {
+    "host": "127.0.0.1",
+    "port": 11883,
+    "keepAlive": 60,
+    "queueCapacity": 500,
+    "qos": 0,
+    "topics": [
+      "CustomByteBlock",
+      "/video/#",
+      "RobotPosition",
+      "RobotStaticStatus",
+      "RobotDynamicStatus"
+    ]
+  },
+  "topics": {
+    "video": "CustomByteBlock",
+    "robotPosition": "RobotPosition",
+    "robotStaticStatus": "RobotStaticStatus",
+    "robotDynamicStatus": "RobotDynamicStatus"
+  },
+  "udp": {
+    "host": "127.0.0.1",
+    "port": 3334,
+    "recvBufferSize": 1048576,
+    "frameTimeoutMs": 5000,
+    "soTimeoutMs": 500
+  },
+  "video": {
+    "width": 300,
+    "height": 300,
+    "displayScale": 0.5
+  },
+  "buffer": {
+    "streamBufferSoftLimit": 5120,
+    "streamBufferHardLimit": 500000,
+    "queueBacklogDrop": 5,
+    "decoderThreadCount": 8,
+    "renderIntervalMs": 2
+  }
+}

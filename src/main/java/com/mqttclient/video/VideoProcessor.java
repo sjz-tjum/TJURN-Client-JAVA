@@ -29,7 +29,7 @@ import java.util.function.Consumer;
  *   <li>每秒通过 {@link StatsListener} 回调统计</li>
  * </ul>
  */
-public class VideoProcessor extends Thread {
+public class VideoProcessor extends Thread implements VideoStreamProcessor {
 
     private final MqttReceiver mqtt;
     private final VideoDecoder decoder;
@@ -82,8 +82,14 @@ public class VideoProcessor extends Thread {
         packetProcessors.add(p);
     }
 
+    @Override
     public void setStatsListener(StatsListener l) {
         this.statsListener = l;
+    }
+
+    @Override
+    public String getSourceLabel() {
+        return "MQTT";
     }
 
     public void setStatusListener(Consumer<String> l) {
@@ -162,13 +168,14 @@ public class VideoProcessor extends Thread {
             }
         }
 
-        // 提取 extradata：未成功前每个包都尝试
+        // 检测 SPS/PPS：只标记，不注入 avcC extradata。
+        // 注：Annex-B 分片用流内参数集即可初始化解码器；注入 avcC 会让 FFmpeg 切到
+        // AVCC 模式（按长度前缀拆 NAL），与 Annex-B 起始码分片不匹配导致拆分失败。
         if (!extradataExtracted) {
             byte[] avcc = AvccExtractor.extractAvcc(packet.h264Chunk());
             if (avcc != null) {
-                decoder.setExtradata(avcc);
                 extradataExtracted = true;
-                emitStatus("已从 seq=" + seqId + " 提取并缓存 SPS/PPS");
+                emitStatus("已从 seq=" + seqId + " 检测到 SPS/PPS (流内解码)");
             }
         }
 

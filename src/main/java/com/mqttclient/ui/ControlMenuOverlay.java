@@ -32,6 +32,8 @@ public class ControlMenuOverlay extends JPanel {
     public final HudButton btnStop = new HudButton("停止解码");
     public final HudButton btnClearLog = new HudButton("清空日志");
     public final HudButton btnChangeId = new HudButton("修改客户端 ID");
+    public final HudButton btnSwitchSource = new HudButton("切换视频源 (UDP/MQTT)");
+    public final HudButton btnReloadConfig = new HudButton("重载配置");
 
     private final JPanel card;
 
@@ -55,7 +57,8 @@ public class ControlMenuOverlay extends JPanel {
         card.add(Box.createVerticalStrut(20));
 
         for (HudButton b : new HudButton[]{
-                btnConnect, btnDisconnect, btnStart, btnStop, btnClearLog, btnChangeId}) {
+                btnConnect, btnDisconnect, btnStart, btnStop, btnSwitchSource,
+                btnReloadConfig, btnClearLog, btnChangeId}) {
             b.setAlignmentX(Component.CENTER_ALIGNMENT);
             card.add(b);
             card.add(Box.createVerticalStrut(12));
