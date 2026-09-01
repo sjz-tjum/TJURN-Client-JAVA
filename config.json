@@ -31,6 +31,10 @@
     "frameTimeoutMs": 5000,
     "soTimeoutMs": 500
   },
+  "ping": {
+    "port": 3335,
+    "broadcast": "255.255.255.255"
+  },
   "video": {
     "width": 300,
     "height": 300,

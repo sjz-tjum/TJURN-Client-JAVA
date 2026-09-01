@@ -429,6 +429,8 @@ package com.mqttclient.ui;
 import com.mqttclient.config.Constants;
 import com.mqttclient.config.Config;
 import com.mqttclient.mqtt.MqttReceiver;
+import com.mqttclient.net.PingChannel;
+import com.mqttclient.net.PingChannel.PingMessage;
 import com.mqttclient.protobuf.RobotPositionParser;
 import com.mqttclient.protobuf.RobotStatusParser;
 import com.mqttclient.protobuf.gen.RobotDynamicStatusProto.RobotDynamicStatus;
@@ -481,6 +483,8 @@ public class MainWindow extends JFrame {
     private final MinimapOverlay minimapOverlay = new MinimapOverlay();
     private final ControlMenuOverlay controlMenu = new ControlMenuOverlay();
     private final StatBarOverlay statBar = new StatBarOverlay();
+    private final PingAlertOverlay pingAlertOverlay = new PingAlertOverlay();
+    private PingChannel pingChannel;   // 客户端直连标点广播（UDP，无 broker）
     private final JTextArea logArea;
 
     // 分层容器
@@ -527,10 +531,13 @@ public class MainWindow extends JFrame {
         debugOverlay.setPinned(debugPinned);
         refreshOverlayVisibility();
 
+        // 启动客户端直连标点通道（UDP 广播，无需 MQTT broker）
+        startPingChannel();
+
         appendLog("程序启动，等待 MQTT 连接...");
         appendLog("按键: 0=切换源 F5=重载配置 ESC=控制菜单 F3=调试 F4=常驻 +/-=缩放 1-6=控制");
         appendLog("配置从 config.json 读取，修改后自动热重载 (F5 手动重载)");
-        appendLog("小地图: 拖动左上角手柄或滚轮缩放，双击全屏/还原");
+        appendLog("小地图: 左键单击地图=标点，点击标题栏=全屏/还原，拖手柄或滚轮=缩放");
         appendLog("左下角状态面板: 显示机器人类型·等级·血量·热量·经验");
         // 启动后弹出客户端 ID 输入框
         SwingUtilities.invokeLater(this::askClientId);
@@ -547,9 +554,12 @@ public class MainWindow extends JFrame {
         layeredPane.add(debugOverlay, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(minimapOverlay, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(statBar, JLayeredPane.PALETTE_LAYER);
+        layeredPane.add(pingAlertOverlay, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(controlMenu, JLayeredPane.MODAL_LAYER);
-        // 小地图需要接收鼠标（拖动缩放 / 双击全屏），置于调试 HUD 之上以优先命中
+        // 小地图需要接收鼠标（拖动缩放 / 双击全屏 / 单击标点），置于调试 HUD 之上以优先命中
         layeredPane.moveToFront(minimapOverlay);
+        // 标点横幅不拦截鼠标，置顶绘制但点击穿透
+        layeredPane.moveToFront(pingAlertOverlay);
 
         loadFieldMap();
 
@@ -790,6 +800,34 @@ public class MainWindow extends JFrame {
         }
     }
 
+    /** 启动客户端直连标点通道（UDP 广播，无 broker、无 protobuf），并接线小地图点击。 */
+    private void startPingChannel() {
+        pingChannel = new PingChannel(Constants.PING_PORT, Constants.PING_BROADCAST_ADDR,
+                this::onPingReceived);
+        pingChannel.start();
+
+        // 点击小地图 → UDP 广播标点（同一以太网所有客户端都能收到）+ 本地立即显示
+        minimapOverlay.setOnPingListener((x, y) -> {
+            if (pingChannel != null) {
+                pingChannel.broadcastPing(x.floatValue(), y.floatValue(), clientId);
+            }
+            minimapOverlay.showPing(x, y, clientId);
+            appendLog("标点: (" + String.format("%.1f", x) + ", "
+                    + String.format("%.1f", y) + ")");
+        });
+    }
+
+    /** 收到标点（PingChannel 接收线程）：切到 EDT 显示波纹 + 提醒横幅。 */
+    private void onPingReceived(PingMessage ping) {
+        float x = ping.x();
+        float y = ping.y();
+        String sender = ping.sender();
+        SwingUtilities.invokeLater(() -> {
+            minimapOverlay.showPing(x, y, sender);
+            pingAlertOverlay.showAlert(sender, x, y);
+        });
+    }
+
     /** 收到机器人位置（Paho 线程）：解析 protobuf 并在 EDT 上刷新小地图。 */
     private void onRobotPosition(byte[] payload) {
         try {
@@ -1025,6 +1063,9 @@ public class MainWindow extends JFrame {
     private void onClose() {
         appendLog("正在关闭程序...");
         onStop();
+        if (pingChannel != null) {
+            pingChannel.close();
+        }
         if (udpProcessor != null) {
             udpProcessor.stopProcessor();
             udpProcessor = null;

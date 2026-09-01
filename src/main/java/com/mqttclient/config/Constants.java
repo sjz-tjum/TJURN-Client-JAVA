@@ -41,6 +41,12 @@ public final class Constants {
     public static int UDP_FRAME_TIMEOUT_MS = 5000;
     public static int UDP_SO_TIMEOUT_MS = 500;
 
+    // ==== 标点广播（config.json: ping）====
+    /** 客户端直连（UDP 广播）标点端口。 */
+    public static int PING_PORT = 3335;
+    /** 局域网广播地址。 */
+    public static String PING_BROADCAST_ADDR = "255.255.255.255";
+
     // ==== 主题（config.json: topics / mqtt.topics）====
     public static String ROBOT_POSITION_TOPIC = "RobotPosition";
     public static String ROBOT_STATIC_STATUS_TOPIC = "RobotStaticStatus";
@@ -90,6 +96,8 @@ public final class Constants {
         ROBOT_DYNAMIC_STATUS_TOPIC = Config.str("topics", "robotDynamicStatus", ROBOT_DYNAMIC_STATUS_TOPIC);
 
         // udp
+        PING_PORT = Config.i("ping", "port", PING_PORT);
+        PING_BROADCAST_ADDR = Config.str("ping", "broadcast", PING_BROADCAST_ADDR);
         UDP_HOST = Config.str("udp", "host", UDP_HOST);
         UDP_PORT = Config.i("udp", "port", UDP_PORT);
         UDP_RECV_BUF_SIZE = Config.i("udp", "recvBufferSize", UDP_RECV_BUF_SIZE);

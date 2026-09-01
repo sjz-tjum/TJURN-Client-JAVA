@@ -163,6 +163,22 @@ public class MqttReceiver implements MqttCallback {
         }
     }
 
+    /** 发布消息到指定主题。 */
+    public void publish(String topic, byte[] payload, int qos) {
+        try {
+            if (client == null || !client.isConnected()) {
+                System.out.printf("[MQTT] 未连接，无法发布到: %s%n", topic);
+                return;
+            }
+            MqttMessage msg = new MqttMessage(payload);
+            msg.setQos(qos);
+            msg.setRetained(false);
+            client.publish(topic, msg);
+        } catch (MqttException e) {
+            System.out.printf("[MQTT] 发布失败 %s: %s%n", topic, e.getMessage());
+        }
+    }
+
     // ==== MqttCallback ====
 
     @Override

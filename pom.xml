@@ -23,28 +23,28 @@
     </properties>
 
     <dependencies>
-        <!-- MQTT 客户端 (对应 Python paho.mqtt) -->
+        <!-- MQTT 客户端 -->
         <dependency>
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
             <version>${paho.version}</version>
         </dependency>
 
-        <!-- Protobuf 运行时 (对应 Python protobuf) -->
+        <!-- Protobuf 运行时 -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
             <version>${protobuf.version}</version>
         </dependency>
 
-        <!-- Gson: 运行时 JSON 配置解析 (config.json 热重载) -->
+        <!-- Gson: 运行时 JSON 配置解析  -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.10.1</version>
         </dependency>
 
-        <!-- JavaCV 平台全家桶：H.264 解码核心，开发与运行通用 -->
+        <!-- H.264 解码核心，开发与运行通用 -->
         <dependency>
             <groupId>org.bytedeco</groupId>
             <artifactId>javacv-platform</artifactId>

@@ -10,6 +10,7 @@
 - Annex-B 码流重组，提取 SPS/PPS 构建 avcC
 - H.264 解码（JavaCV / FFmpeg）
 - Swing 实时视频显示 + 日志 + 统计（包数 / 帧数 / 解码 FPS / 显示 FPS / 丢包）
+- 小地图标点（ping）：点击小地图广播坐标，所有队友看到波纹动画 + 顶部横幅 + 屏幕闪光提醒
 
 ## 与 Python 版的对应关系
 
@@ -115,6 +116,20 @@ VideoStreamData = seq_id(uint16 LE) + timestamp(int64 LE) + 290 字节 H.264 分
 > 客户端 H.264 解码走**流内 SPS/PPS**（Annex-B），因此发送端必须提供带起始码的
 > Annex-B 流，客户端才能重组解码。
 
+### 小地图标点（Ping）
+
+MOBA 风格的团队协作标点：**点击小地图上任意位置**，坐标通过 **UDP 广播**直接发给同一以太网内
+的所有客户端（**无需 MQTT broker、无需 protobuf**）。每台客户端在小地图上显示
+**霓虹青波纹扩散动画**，同时屏幕顶部弹出**科幻 HUD 横幅**（深色斜切角面板 + 霓虹发光边框 +
+扫描线 + 发光「注意！」+ 霓虹警告三角），约 3 秒后淡出。
+
+- 触发：小地图上**左键单击**（双击仍是全屏切换，已做防抖）
+- 传输：UDP 广播到 `ping.port`（默认 3335），纯文本 `PING,x,y,sender`
+- 标点者自己也会立即看到波纹（本地乐观回显）
+- 相关类：`com.mqttclient.net.PingChannel`（UDP 广播收发）、`MinimapOverlay`（波纹 + 点击）、
+  `PingAlertOverlay`（横幅 + 闪光）
+- 端口/广播地址可在 `config.json` 的 `ping` 段配置
+
 ## 测试
 
 ```bash
@@ -138,6 +153,7 @@ mvn test
   "topics": { "video": "CustomByteBlock", "robotPosition": "RobotPosition", ... },
   "udp":    { "host": "127.0.0.1", "port": 3334, "recvBufferSize": 1048576,
               "frameTimeoutMs": 5000, "soTimeoutMs": 500 },
+  "ping":   { "port": 3335, "broadcast": "255.255.255.255" },
   "video":  { "width": 300, "height": 300, "displayScale": 0.5 },
   "buffer": { "streamBufferSoftLimit": 5120, "streamBufferHardLimit": 500000,
               "queueBacklogDrop": 5, "decoderThreadCount": 8, "renderIntervalMs": 2 },

@@ -307,6 +307,7 @@
 package com.mqttclient.ui;
 
 import javax.swing.JPanel;
+import javax.swing.Timer;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
@@ -323,6 +324,9 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
 
 /**
  * 小地图叠加层 —— 把机器人的二维坐标 (x, y) 与朝向 (yaw) 等比例标注到右下角的场地平面图上。
@@ -331,7 +335,8 @@ import java.awt.image.BufferedImage;
  * <ul>
  *   <li>鼠标拖动左上角手柄 —— 等比例缩放小地图（宽高比恒定为场地真实比例）</li>
  *   <li>鼠标滚轮在小地图上滚动 / 外部调用 {@link #zoomIn()} {@link #zoomOut()} —— 缩放</li>
- *   <li>双击小地图 —— 切换全屏 / 还原</li>
+ *   <li>单击标题栏 —— 切换全屏 / 还原</li>
+ *   <li>单击地图 —— 标点（ping）</li>
  * </ul>
  *
  * <p><b>更换地图接口：</b>调用 {@link #setMap(MapModel)} 传入新的 {@link MapModel}
@@ -353,6 +358,10 @@ public class MinimapOverlay extends JPanel {
     private static final Color TITLE      = new Color(0x40c4ff);
     private static final Color TEXT       = new Color(0xe0e0e0);
     private static final Color TEXT_DIM   = new Color(0x90caf9);
+    // 标点（ping）配色：霓虹青，科幻 HUD 风
+    private static final Color PING       = new Color(0x00e5ff);
+    private static final Color PING_SOLID = new Color(0x00e5ff);
+    private static final long PING_DURATION_MS = 3000;
 
     private static final Font FONT       = new Font(Font.MONOSPACED, Font.PLAIN, 12);
     private static final Font FONT_BOLD  = new Font(Font.MONOSPACED, Font.BOLD, 13);
@@ -419,17 +428,35 @@ public class MinimapOverlay extends JPanel {
         }
     }
 
-    /** 一次布局计算结果：面板矩形、地图矩形、缩放手柄矩形。 */
+    /** 一次标点波纹效果（世界坐标 + 发送者）。 */
+    private static final class PingEffect {
+        final double x, y;
+        final String sender;
+        final long startMs;
+        final long durationMs;
+        PingEffect(double x, double y, String sender, long startMs, long durationMs) {
+            this.x = x;
+            this.y = y;
+            this.sender = sender;
+            this.startMs = startMs;
+            this.durationMs = durationMs;
+        }
+    }
+
+    /** 一次布局计算结果：面板矩形、地图矩形、标题条、缩放手柄矩形。 */
     private static final class Layout {
         final Rectangle panel;
         final int mapX, mapY, mapW, mapH;
+        final Rectangle titleBar;   // 顶部标题条：单击切换全屏 / 退出
         final Rectangle handle;
-        Layout(Rectangle panel, int mapX, int mapY, int mapW, int mapH, Rectangle handle) {
+        Layout(Rectangle panel, int mapX, int mapY, int mapW, int mapH,
+               Rectangle titleBar, Rectangle handle) {
             this.panel = panel;
             this.mapX = mapX;
             this.mapY = mapY;
             this.mapW = mapW;
             this.mapH = mapH;
+            this.titleBar = titleBar;
             this.handle = handle;
         }
     }
@@ -447,6 +474,11 @@ public class MinimapOverlay extends JPanel {
     private boolean dragging = false;
     private int dragStartWidth;
     private java.awt.Point dragStartPoint;
+
+    // ==== 标点（ping）状态 ====
+    private BiConsumer<Double, Double> pingListener;              // 点击小地图回调世界坐标
+    private final List<PingEffect> pings = new CopyOnWriteArrayList<>();
+    private Timer pingAnimTimer;                                  // 波纹动画驱动
 
     public MinimapOverlay() {
         setOpaque(false);
@@ -536,6 +568,61 @@ public class MinimapOverlay extends JPanel {
         repaint();
     }
 
+    // ==== 标点（ping）====
+
+    /** 注册标点回调：点击小地图时以世界坐标 (x, y) 回调。 */
+    public void setOnPingListener(BiConsumer<Double, Double> listener) {
+        this.pingListener = listener;
+    }
+
+    /**
+     * 显示一个标点波纹。线程安全（自动切到 EDT）。
+     *
+     * @param x      世界坐标 X（米）
+     * @param y      世界坐标 Y（米）
+     * @param sender 发送者客户端 ID（可为 null/空）
+     */
+    public void showPing(double x, double y, String sender) {
+        if (!javax.swing.SwingUtilities.isEventDispatchThread()) {
+            javax.swing.SwingUtilities.invokeLater(() -> showPing(x, y, sender));
+            return;
+        }
+        pings.add(new PingEffect(x, y, sender, System.currentTimeMillis(), PING_DURATION_MS));
+        ensureAnimTimer();
+    }
+
+    /** 若动画定时器未运行则启动；无标点时自动停止。 */
+    private void ensureAnimTimer() {
+        if (pingAnimTimer != null && pingAnimTimer.isRunning()) {
+            return;
+        }
+        pingAnimTimer = new Timer(33, e -> {
+            long now = System.currentTimeMillis();
+            pings.removeIf(pe -> now - pe.startMs > pe.durationMs);
+            if (pings.isEmpty()) {
+                pingAnimTimer.stop();
+            } else {
+                repaint();
+            }
+        });
+        pingAnimTimer.start();
+    }
+
+    /** 单击标点：双击防抖（250ms 内再来一次则取消）。 */
+    /** 把地图内点击坐标换算为世界坐标并回调（无防抖，快速连点也只标点）。 */
+    private void pingAt(java.awt.Point p) {
+        if (pingListener == null) {
+            return;
+        }
+        Layout l = computeLayout(getWidth(), getHeight());
+        MapModel m = map;
+        double fx = clamp01((p.x - l.mapX) / (double) l.mapW);
+        double fy = clamp01(1 - (p.y - l.mapY) / (double) l.mapH); // Y 翻转
+        double wx = fx * m.widthMeters - m.originOffsetX;
+        double wy = fy * m.heightMeters - m.originOffsetY;
+        pingListener.accept(wx, wy);
+    }
+
     // ==== 鼠标交互 ====
 
     private void installMouseInteraction() {
@@ -573,11 +660,20 @@ public class MinimapOverlay extends JPanel {
 
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2) {
-                    Layout l = computeLayout(getWidth(), getHeight());
-                    if (fullscreen || l.panel.contains(e.getPoint())) {
-                        toggleFullscreen();
-                    }
+                if (e.getButton() != MouseEvent.BUTTON1) {
+                    return;
+                }
+                java.awt.Point p = e.getPoint();
+                Layout l = computeLayout(getWidth(), getHeight());
+                // 地图矩形内 → 标点（任意次数，快速连点也只标点，不切屏）
+                if (p.x >= l.mapX && p.x < l.mapX + l.mapW
+                        && p.y >= l.mapY && p.y < l.mapY + l.mapH) {
+                    pingAt(p);
+                    return;
+                }
+                // 标题条 → 切换全屏 / 退出小地图
+                if (l.titleBar != null && l.titleBar.contains(p)) {
+                    toggleFullscreen();
                 }
             }
 
@@ -639,8 +735,9 @@ public class MinimapOverlay extends JPanel {
             int panelH = mapH + PAD * 2 + TITLE_H + FOOTER_H;
             int panelX = (w - panelW) / 2;
             int panelY = (h - panelH) / 2;
+            Rectangle title = new Rectangle(panelX + PAD, panelY + PAD, mapW, TITLE_H);
             return new Layout(new Rectangle(panelX, panelY, panelW, panelH),
-                    panelX + PAD, panelY + PAD + TITLE_H, mapW, mapH, null);
+                    panelX + PAD, panelY + PAD + TITLE_H, mapW, mapH, title, null);
         }
 
         int mapW = clampWidth(minimapWidthPx, w, h);
@@ -649,9 +746,10 @@ public class MinimapOverlay extends JPanel {
         int panelH = mapH + PAD * 2 + TITLE_H + FOOTER_H;
         int panelX = w - panelW - marginPx;
         int panelY = h - panelH - marginPx;
+        Rectangle title = new Rectangle(panelX + PAD, panelY + PAD, mapW, TITLE_H);
         Rectangle handle = new Rectangle(panelX, panelY, HANDLE, HANDLE);
         return new Layout(new Rectangle(panelX, panelY, panelW, panelH),
-                panelX + PAD, panelY + PAD + TITLE_H, mapW, mapH, handle);
+                panelX + PAD, panelY + PAD + TITLE_H, mapW, mapH, title, handle);
     }
 
     /** 把期望像素宽度夹取到 [MIN_MAP_W, 适配窗口的上限]。 */
@@ -698,7 +796,7 @@ public class MinimapOverlay extends JPanel {
         g2.setColor(TITLE);
         String title = String.format("小地图 · %s  %.0f×%.0fm%s",
                 m.name, m.widthMeters, m.heightMeters,
-                fullscreen ? "  [全屏·双击还原]" : "");
+                fullscreen ? "  [点击标题还原]" : "");
         g2.drawString(title, L.panel.x + PAD, L.panel.y + PAD + 12);
 
         // 地图矩形
@@ -716,6 +814,9 @@ public class MinimapOverlay extends JPanel {
             g2.drawString(wait, L.mapX + (L.mapW - tw) / 2, L.mapY + L.mapH / 2);
             coordText = "x= --   y= --   yaw= --";
         }
+
+        // 标点波纹（绘制在机器人之上，醒目）
+        drawPings(g2, m, L.mapX, L.mapY, L.mapW, L.mapH);
 
         // 底部坐标读数
         g2.setFont(FONT);
@@ -810,6 +911,56 @@ public class MinimapOverlay extends JPanel {
 
         return String.format("x=%.2f  y=%.2f  yaw=%.0f°",
                 p.x, p.y, yawDeg);
+    }
+
+    /**
+     * 绘制标点波纹：多个由内向外扩散、透明度渐减的金色圆环 + 中心亮点 + 发送者名字。
+     */
+    private void drawPings(Graphics2D g2, MapModel m, int mapX, int mapY, int mapW, int mapH) {
+        if (pings.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        double baseR = Math.max(8, mapW * 0.022);
+        for (PingEffect pe : pings) {
+            double progress = (now - pe.startMs) / (double) pe.durationMs;
+            if (progress < 0 || progress > 1) {
+                continue;
+            }
+            // 世界 → 像素
+            double wx = pe.x + m.originOffsetX;
+            double wy = pe.y + m.originOffsetY;
+            double fx = clamp01(wx / m.widthMeters);
+            double fy = clamp01(wy / m.heightMeters);
+            double sx = mapX + fx * mapW;
+            double sy = mapY + mapH - fy * mapH;   // 纵轴翻转
+
+            // 扩散圆环：3 个，相位错开，随 progress 变大变淡
+            for (int i = 0; i < 3; i++) {
+                double rp = progress * 1.35 + i * 0.45;
+                if (rp > 1) {
+                    continue;
+                }
+                double radius = baseR * (0.3 + rp * 2.4);
+                int alpha = (int) ((1 - rp) * 220);
+                g2.setColor(new Color(PING.getRed(), PING.getGreen(), PING.getBlue(),
+                        Math.max(0, Math.min(255, alpha))));
+                g2.setStroke(new BasicStroke(Math.max(1.5f, (float) (3.5 * (1 - rp)))));
+                g2.draw(new Ellipse2D.Double(sx - radius, sy - radius, radius * 2, radius * 2));
+            }
+
+            // 中心亮点
+            double r = Math.max(3, baseR * 0.35);
+            g2.setColor(PING_SOLID);
+            g2.fill(new Ellipse2D.Double(sx - r, sy - r, 2 * r, 2 * r));
+
+            // 发送者名字
+            if (pe.sender != null && !pe.sender.isEmpty()) {
+                g2.setFont(FONT);
+                g2.setColor(PING_SOLID);
+                g2.drawString(pe.sender, (float) (sx + r + 4), (float) (sy - r - 2));
+            }
+        }
     }
 
     /** 左上角缩放手柄：角标 + 斜向条纹，提示可拖动。 */
