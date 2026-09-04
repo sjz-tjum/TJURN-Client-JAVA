@@ -18,6 +18,8 @@
 
         <paho.version>1.2.5</paho.version>
         <javacv.version>1.5.10</javacv.version>
+        <ffmpeg.version>6.1.1-1.5.10</ffmpeg.version>
+        <javacpp.version>1.5.10</javacpp.version>
         <protobuf.version>3.25.3</protobuf.version>
         <junit.version>5.10.2</junit.version>
     </properties>
@@ -44,11 +46,55 @@
             <version>2.10.1</version>
         </dependency>
 
-        <!-- H.264 解码核心，开发与运行通用 -->
+        <!-- H.264/HEVC 解码核心（Java 绑定，传递引入 javacpp 主包） -->
         <dependency>
             <groupId>org.bytedeco</groupId>
-            <artifactId>javacv-platform</artifactId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg.version}</version>
+        </dependency>
+
+        <!-- FFmpeg 原生库：仅 Windows + Linux x86_64。
+             两个 classifier 同时打进同一个 fat jar，JavaCPP 按运行平台自动选择，
+             故同一产物可直接跑在任一 OS 上。 -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg.version}</version>
+            <classifier>windows-x86_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>ffmpeg</artifactId>
+            <version>${ffmpeg.version}</version>
+            <classifier>linux-x86_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- JavaCPP 运行时原生（jnijavacpp.dll / libjnijavacpp.so）。
+             它不在 ffmpeg 的 classifier jar 里，必须随包带上，否则 BytePointer/Pointer 无法加载。 -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacpp</artifactId>
+            <version>${javacpp.version}</version>
+            <classifier>windows-x86_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacpp</artifactId>
+            <version>${javacpp.version}</version>
+            <classifier>linux-x86_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- javacv 仅测试需要：UdpProcessorEndToEndTest 用 FFmpegFrameRecorder 合成 HEVC 流，
+             其产物/原生库绝不进入运行时 fat jar。 -->
+        <dependency>
+            <groupId>org.bytedeco</groupId>
+            <artifactId>javacv</artifactId>
             <version>${javacv.version}</version>
+            <scope>test</scope>
         </dependency>
 
         <!-- 单元测试 -->
@@ -97,6 +143,50 @@
                 <configuration>
                     <mainClass>com.mqttclient.Main</mainClass>
                 </configuration>
+            </plugin>
+
+            <!-- 打 fat 可运行 jar：mqtt-h264-client.jar（package 阶段直接替换 thin jar） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.mqttclient.Main</mainClass>
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>META-INF/INDEX.LIST</exclude>
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                        <exclude>META-INF/native-image/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

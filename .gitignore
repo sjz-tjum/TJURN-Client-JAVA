@@ -1,6 +1,9 @@
 # Maven 构建输出
 target/
 
+# 打包产物（Inno 安装器输出目录）
+release/
+
 # IDE 配置
 .idea/
 *.iml
