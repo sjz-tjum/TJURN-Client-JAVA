@@ -16,17 +16,17 @@ import java.awt.RenderingHints;
 import java.awt.geom.RoundRectangle2D;
 
 /**
- * 调试数据 HUD（类似 Minecraft 的 F3）。
+ * Debug data HUD (similar to Minecraft's F3).
  *
- * <p>浮在视频之上、位于左上角的半透明面板，分区显示：
+ * <p>A semi-transparent panel floating over the video in the top-left corner, showing:
  * <ul>
- *   <li>连接信息：LED 状态 + 状态文字 + 客户端 ID + broker 地址:端口 + 订阅主题</li>
- *   <li>统计数据：包 / 帧 / 解码FPS / 显示FPS / 丢包</li>
- *   <li>实时日志：内嵌半透明滚动文本区</li>
+ *   <li>Connection info: LED status + status text + client ID + broker host:port + subscribed topics</li>
+ *   <li>Statistics: packets / frames / decode FPS / display FPS / dropped packets</li>
+ *   <li>Live log: embedded semi-transparent scrolling text area</li>
  * </ul>
  *
- * <p>数据由 {@link MainWindow} 通过 setter 写入后触发重绘；可见性
- * 由 MainWindow 根据 F3（临时）/ F4（常驻）状态控制。
+ * <p>Data is written by {@link MainWindow} through setters that trigger a repaint; visibility
+ * is controlled by MainWindow based on the F3 (temporary) / F4 (pinned) state.
  */
 public class DebugOverlay extends JPanel {
 
@@ -38,7 +38,7 @@ public class DebugOverlay extends JPanel {
     private static final Font MONO = new Font(Font.MONOSPACED, Font.PLAIN, 13);
     private static final Font MONO_BOLD = new Font(Font.MONOSPACED, Font.BOLD, 14);
 
-    // 数据模型
+    // Data model
     private boolean connected = false;
     private String status = "未连接";
     private String clientId = "";
@@ -46,7 +46,7 @@ public class DebugOverlay extends JPanel {
     private String sourceLabel = "MQTT";
     private boolean pinned = false;
 
-    // 内嵌日志区
+    // Embedded log area
     private final JTextArea logArea = new JTextArea();
     private final JScrollPane logScroll;
 
@@ -71,7 +71,7 @@ public class DebugOverlay extends JPanel {
         add(logScroll, BorderLayout.CENTER);
     }
 
-    /** 供 MainWindow 直接向其追加日志。 */
+    /** Lets MainWindow append log messages directly. */
     public JTextArea getLogArea() {
         return logArea;
     }
@@ -123,14 +123,14 @@ public class DebugOverlay extends JPanel {
         int x = 28;
         int y = 40;
 
-        // 标题
+        // Title
         g2.setFont(MONO_BOLD.deriveFont(16f));
         g2.setColor(TITLE_COLOR);
         g2.drawString("视频接收器 [" + sourceLabel + "]"
                 + (pinned ? " [常驻]" : ""), x, y);
         y += 28;
 
-        // 连接信息
+        // Connection info
         g2.setFont(MONO_BOLD);
         g2.setColor(LABEL_COLOR);
         g2.drawString("── 连接 ──", x, y);
@@ -151,7 +151,7 @@ public class DebugOverlay extends JPanel {
         drawKv(g2, x, y, "订阅主题", String.join(", ", Constants.SUBSCRIBE_TOPICS));
         y += 28;
 
-        // 统计
+        // Statistics
         g2.setFont(MONO_BOLD);
         g2.setColor(LABEL_COLOR);
         g2.drawString("── 统计 ──", x, y);
@@ -161,7 +161,7 @@ public class DebugOverlay extends JPanel {
         g2.drawString(stats, x, y);
         y += 26;
 
-        // 日志标题
+        // Log title
         g2.setFont(MONO_BOLD);
         g2.setColor(LABEL_COLOR);
         g2.drawString("── 日志 ──", x, y);

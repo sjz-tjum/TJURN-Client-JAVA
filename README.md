@@ -1,20 +1,21 @@
-# MQTT H.264 视频接收器 (Java 版)
+# MQTT H.264 Video Receiver (Java)
 
-本项目是 PyQt5 版 MQTT H.264 低带宽实时图传接收端的 Java 移植版，功能等价：
-通过 MQTT 订阅 H.264 分片，重组码流，硬/软解码后在 Swing 窗口中实时显示，并提供实时统计。
+This project is a Java port of the PyQt5-based MQTT H.264 low-bandwidth real-time video receiver, with equivalent functionality:
+it subscribes to fragmented H.264 over MQTT, reassembles the bitstream, decodes it with hardware/software codecs, and displays the
+live feed in a Swing window together with real-time statistics.
 
-## 功能
+## Features
 
-- MQTT 连接 / 断开，客户端 ID 可输入或自动生成
-- 订阅并解析 `<Hq290s`（little-endian: seqId `uint16` + timestamp `int64` + 290 字节分片）
-- Annex-B 码流重组，提取 SPS/PPS 构建 avcC
-- H.264 解码（JavaCV / FFmpeg）
-- Swing 实时视频显示 + 日志 + 统计（包数 / 帧数 / 解码 FPS / 显示 FPS / 丢包）
-- 小地图标点（ping）：点击小地图广播坐标，所有队友看到波纹动画 + 顶部横幅 + 屏幕闪光提醒
+- MQTT connect / disconnect; client ID can be entered manually or auto-generated
+- Subscribe to and parse `<Hq290s` fragments (little-endian: seqId `uint16` + timestamp `int64` + 290-byte fragment)
+- Annex-B bitstream reassembly; extracts SPS/PPS to build avcC
+- H.264 decoding (JavaCV / FFmpeg)
+- Swing real-time video display + logging + statistics (packet count / frame count / decode FPS / display FPS / packet loss)
+- Minimap ping: click the minimap to broadcast coordinates; all teammates see a ripple animation + top banner + screen flash alert
 
-## 与 Python 版的对应关系
+## Mapping to the Python Version
 
-| Python 版 | Java 版 |
+| Python version | Java version |
 |-----------|---------|
 | `main.py` | `com.mqttclient.Main` |
 | `ui/main_window.py` | `com.mqttclient.ui.MainWindow` |
@@ -25,127 +26,140 @@
 | `utils/constants.py` | `com.mqttclient.config.Constants` |
 | paho.mqtt / PyAV / protobuf | Eclipse Paho / JavaCV / protobuf-java |
 
-## 扩展接口
+## Extension Interfaces
 
-`com.mqttclient.ext` 下预留了扩展点，便于在不改动核心的情况下添加功能：
+The `com.mqttclient.ext` package reserves extension points so features can be added without modifying the core:
 
-- `PacketProcessor` — 在解包后、解码前对分片做处理（如统计、过滤、加密解密）
-- `FrameListener` — 每解出一帧回调（如录制、转发、AI 推理）
-- `StatsListener` — 统计信息回调（如上报监控）
+- `PacketProcessor` — processes fragments after unpacking and before decoding (e.g., statistics, filtering, encryption/decryption)
+- `FrameListener` — callback for each decoded frame (e.g., recording, forwarding, AI inference)
+- `StatsListener` — statistics callback (e.g., monitoring/telemetry reporting)
 
-`VideoProcessor` 提供 `addPacketProcessor` / `addFrameListener` / `setStatsListener` 注册这些扩展。
+`VideoProcessor` provides `addPacketProcessor` / `addFrameListener` / `setStatsListener` to register these extensions.
 
-## 测试工具 (tools/)
+## Test Tools (tools/)
 
-| 脚本 | 作用 | 依赖 |
+| Script | Purpose | Dependencies |
 |------|------|------|
-| `tools/mqtt_broker.py` | 纯 Python MQTT 3.1.1 Broker，本地转发 | 无 |
-| `tools/mqtt_test_sender.py` | MP4 → H.264 → 290B 分片 → protobuf → 发布 MQTT | PyAV, paho-mqtt |
-| `tools/udp_mp4_sender.py` | MP4 → Annex-B HEVC → UDP 分片发送 | PyAV |
-| `tools/udp_test_sender.py` | 裸 Annex-B HEVC 文件 → UDP 分片发送 | 无（--generate 需 ffmpeg）|
+| `tools/mqtt_broker.py` | Pure-Python MQTT 3.1.1 broker for local forwarding | None |
+| `tools/mqtt_test_sender.py` | MP4 → H.264 → 290B fragments → protobuf → publish to MQTT | PyAV, paho-mqtt |
+| `tools/udp_mp4_sender.py` | MP4 → Annex-B HEVC → send as UDP fragments | PyAV |
+| `tools/udp_test_sender.py` | Raw Annex-B HEVC file → send as UDP fragments | None (`--generate` needs ffmpeg) |
+| `tools/run_test.sh` | **One-click test** of both the MQTT and UDP links (headless auto-verification) | Java/Maven + Python |
 
-安装依赖：
+### One-Click Test
+
+```bash
+bash tools/run_test.sh            # test MQTT + UDP
+bash tools/run_test.sh --mqtt     # test MQTT only
+bash tools/run_test.sh --udp      # test UDP only
+```
+
+Flow: compile → start a local broker → start the headless receiver `VideoTestReceiver` (which decodes both MQTT H.264 and UDP HEVC) →
+run `mqtt_test_sender.py` (128x128.264) and `udp_test_sender.py` (test_sample.hevc) → report ✅/❌ based on decoded frame counts.
+
+Install dependencies:
 
 ```bash
 pip install av paho-mqtt
 ```
 
-所有脚本从项目根目录的 `config.json` 读取默认参数（host/port 等），命令行参数优先。
+All scripts read default parameters (host/port, etc.) from `config.json` in the project root; command-line arguments take precedence.
 
-## 构建与运行
+## Build & Run
 
-需要 JDK 17+ 和 Maven。
+Requires JDK 17+ and Maven.
 
 ```bash
 cd javaclient
-mvn compile exec:java     # 直接运行客户端
+mvn compile exec:java     # run the client directly
 ```
 
-客户端按键：`0` 切换 UDP/MQTT 视频源，`1` 连接 MQTT，`3` 开始解码，`F5` 重载配置，`ESC` 控制菜单。
+Client key bindings: `0` switches the UDP/MQTT video source, `1` connects to MQTT, `3` starts decoding, `F5` reloads the config, `ESC` opens the control menu.
 
-### UDP HEVC 视频流
+### UDP HEVC Video Stream
 
-客户端支持两种视频源，随时切换（按 `0` 或控制菜单"切换视频源"）：
+The client supports two video sources that can be switched at any time (press `0` or use "switch video source" in the control menu):
 
-| 视频源 | 传输 | 编码 |
+| Video source | Transport | Codec |
 |--------|------|------|
-| MQTT | `CustomByteBlock` 主题 | H.264 (JavaCV) |
-| UDP | 端口 3334 | HEVC / H.265 (JavaCV) |
+| MQTT | `CustomByteBlock` topic | H.264 (JavaCV) |
+| UDP | port 3334 | HEVC / H.265 (JavaCV) |
 
-UDP 包格式（big-endian）：
+UDP packet format (big-endian):
 
 ```
-frame_id (2B) + frag_id (2B) + total_bytes (4B) + HEVC 数据
+frame_id (2B) + frag_id (2B) + total_bytes (4B) + HEVC data
 ```
 
-测试发送脚本都在 `tools/` 目录下：
+Test sender scripts are under `tools/`:
 
 ```bash
-# 方式一：发送 MP4 容器（PyAV 解封装 → 转 Annex-B → UDP）— 需 pip install av
-python tools/udp_mp4_sender.py "视频.mp4"                    # 实时速度
-python tools/udp_mp4_sender.py "视频.mp4" --speed 5          # 5 倍速
+# Option 1: send an MP4 container (PyAV demux → Annex-B → UDP) — requires pip install av
+python tools/udp_mp4_sender.py "video.mp4"                    # real-time speed
+python tools/udp_mp4_sender.py "video.mp4" --speed 5          # 5x speed
 
-# 方式二：发送裸 Annex-B HEVC 文件（需 ffmpeg 或现成 .hevc 文件）
+# Option 2: send a raw Annex-B HEVC file (needs ffmpeg or an existing .hevc file)
 python tools/udp_test_sender.py --generate --host 127.0.0.1
 python tools/udp_test_sender.py --file input.hevc --host 127.0.0.1
 ```
 
-> MP4 里的 HEVC 参数集（VPS/SPS/PPS）通常只存在 hvcC 里、不在包流中，
-> `udp_mp4_sender.py` 会自动从 hvcC 解析并拼到首帧/关键帧前。
+> HEVC parameter sets (VPS/SPS/PPS) in an MP4 usually exist only inside hvcC, not in the packet stream;
+> `udp_mp4_sender.py` automatically parses them from hvcC and prepends them to the first frame/key frames.
 
-### MQTT 视频流
+### MQTT Video Stream
 
 ```bash
-# 1. 启动本地 broker
+# 1. Start a local broker
 python tools/mqtt_broker.py [--host 0.0.0.0] [--port 11883] [--verbose]
 
-# 2. 发送 H.264 视频到 MQTT（MP4 → libx264 转码 → 290B 分片 → protobuf → 发布）
-python tools/mqtt_test_sender.py "视频.mp4"                    # 实时速度
-python tools/mqtt_test_sender.py "视频.mp4" --speed 2         # 2 倍速
-python tools/mqtt_test_sender.py "视频.mp4" --max-frames 60   # 只发前 60 帧（快速测试）
+# 2. Send H.264 video over MQTT (MP4 → libx264 transcode → 290B fragments → protobuf → publish)
+python tools/mqtt_test_sender.py "video.mp4"                    # real-time speed
+python tools/mqtt_test_sender.py "video.mp4" --speed 2         # 2x speed
+python tools/mqtt_test_sender.py "video.mp4" --max-frames 60   # send only the first 60 frames (quick test)
 ```
 
-`mqtt_broker.py` 是纯 Python asyncio 实现的 MQTT 3.1.1 Broker（无外部依赖）。
-MQTT 视频包格式（与 Java 客户端一致）：
+`mqtt_broker.py` is a pure-Python asyncio MQTT 3.1.1 broker (no external dependencies).
+MQTT video packet format (identical to the Java client):
 
 ```
-MQTT 载荷 = CustomByteBlock protobuf { bytes data = VideoStreamData }
-VideoStreamData = seq_id(uint16 LE) + timestamp(int64 LE) + 290 字节 H.264 分片
+MQTT payload = CustomByteBlock protobuf { bytes data = VideoStreamData }
+VideoStreamData = seq_id(uint16 LE) + timestamp(int64 LE) + 290-byte H.264 fragment
 ```
 
-> 客户端 H.264 解码走**流内 SPS/PPS**（Annex-B），因此发送端必须提供带起始码的
-> Annex-B 流，客户端才能重组解码。
+> The client's H.264 decoding relies on **in-stream SPS/PPS** (Annex-B), so the sender must supply an
+> Annex-B stream with start codes for the client to reassemble and decode.
 
-### 小地图标点（Ping）
+### Minimap Ping
 
-MOBA 风格的团队协作标点：**点击小地图上任意位置**，坐标通过 **UDP 广播**直接发给同一以太网内
-的所有客户端（**无需 MQTT broker、无需 protobuf**）。每台客户端在小地图上显示
-**霓虹青波纹扩散动画**，同时屏幕顶部弹出**科幻 HUD 横幅**（深色斜切角面板 + 霓虹发光边框 +
-扫描线 + 发光「注意！」+ 霓虹警告三角），约 3 秒后淡出。
+MOBA-style team coordination pings: **click anywhere on the minimap**, and the coordinates are sent directly to all
+clients on the same Ethernet network via **UDP broadcast** (**no MQTT broker, no protobuf needed**). Each client shows a
+**neon-cyan ripple spread animation** on the minimap, while a **sci-fi HUD banner** slides in at the top of the screen
+(dark beveled panel + neon glow border + scanlines + a glowing "注意！" ("Attention!") label + neon warning triangle), fading out after ~3 seconds.
 
-- 触发：小地图上**左键单击**（双击仍是全屏切换，已做防抖）
-- 传输：UDP 广播到 `ping.port`（默认 3335），纯文本 `PING,x,y,sender`
-- 标点者自己也会立即看到波纹（本地乐观回显）
-- 相关类：`com.mqttclient.net.PingChannel`（UDP 广播收发）、`MinimapOverlay`（波纹 + 点击）、
-  `PingAlertOverlay`（横幅 + 闪光）
-- 端口/广播地址可在 `config.json` 的 `ping` 段配置
+- Trigger: **left-click** on the minimap (double-click still toggles fullscreen, debounced)
+- Transport: UDP broadcast to `ping.port` (default 3335), plain-text `PING,x,y,sender`
+- The ping sender also sees the ripple immediately (local optimistic echo)
+- Related classes: `com.mqttclient.net.PingChannel` (UDP broadcast send/receive), `MinimapOverlay` (ripple + click),
+  `PingAlertOverlay` (banner + flash)
+- Port/broadcast address can be configured in the `ping` section of `config.json`
 
-## 测试
+## Tests
 
 ```bash
 mvn test
 ```
 
-覆盖 `VideoPacketParser`（struct 解包、无符号 seqId、长度校验）、
-`AvccExtractor`（SPS/PPS 提取、avcC 构建、起始码检测）、
-`UdpFrameReassembler`（乱序重组、去重、超时清理）、
-`ConfigReloadTest`（配置加载与热重载）、
-`UdpProcessorEndToEndTest`（UDP 收包 + HEVC 解码端到端，缺编码器时自动跳过）。
+Covers `VideoPacketParser` (struct unpacking, unsigned seqId, length validation),
+`AvccExtractor` (SPS/PPS extraction, avcC building, start-code detection),
+`UdpFrameReassembler` (out-of-order reassembly, deduplication, timeout cleanup),
+`ConfigReloadTest` (config loading and hot reload), and
+`UdpProcessorEndToEndTest` (UDP receive + HEVC decode end-to-end, auto-skipped when no encoder is available).
 
-## 配置（config.json 软编码）
+## Configuration (config.json Soft-Coding)
 
-所有运行参数从 `config.json` 读取（工作目录优先，其次 classpath，最后内置默认值）。
-修改后保存即自动热重载（每 2 秒检测文件变化），也可按 `F5` 或控制菜单"重载配置"手动刷新。
+All runtime parameters are read from `config.json` (working directory first, then classpath, then built-in defaults).
+Saving changes triggers automatic hot reload (file changes detected every 2 seconds); you can also press `F5` or use
+"reload config" in the control menu to refresh manually.
 
 ```json
 {
@@ -161,10 +175,10 @@ mvn test
 }
 ```
 
-> 端口 1883 在部分 Windows 上会被系统保留（Hyper-V），若绑定失败改用 11883。
+> Port 1883 is reserved on some Windows systems (Hyper-V); if binding fails, use 11883 instead.
 
-- 也可用 `-Dmqtt.config=路径` 指定其他配置文件。
-- 提示：MQTT 连接参数需重连生效；UDP/缓冲/分辨率参数需"停止再启动"生效。
-- `broker` 段供 `mqtt_broker.py` 读取启动参数（命令行参数优先）。
+- You can also specify another config file with `-Dmqtt.config=path`.
+- Note: MQTT connection parameters take effect after reconnecting; UDP/buffer/resolution parameters take effect after "stop and restart".
+- The `broker` section is read by `mqtt_broker.py` for startup parameters (command-line arguments take precedence).
 
-对应 Java 类：`com.mqttclient.config.Config`（JSON 加载器）、`com.mqttclient.config.Constants`（参数表）。
+Corresponding Java classes: `com.mqttclient.config.Config` (JSON loader) and `com.mqttclient.config.Constants` (parameter table).

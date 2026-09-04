@@ -10,15 +10,15 @@ import java.awt.RenderingHints;
 import java.awt.geom.RoundRectangle2D;
 
 /**
- * 游戏风格自绘按钮。
+ * Game-style custom-drawn button.
  *
- * <p>圆角矩形背景，正常 / 悬停 / 按下三态渐变（科技蓝青色调），
- * 悬停时描一圈发光边，禁用时整体变暗。文字白色粗体居中。
- * 全部使用 Java2D 自绘，不依赖 LookAndFeel。
+ * <p>Rounded-rectangle background with three-state gradients (normal / hover / pressed) in
+ * a tech cyan-blue palette, a glowing outline on hover, and a dimmed look when disabled.
+ * Text is bold white and centered. Fully drawn with Java2D; independent of LookAndFeel.
  */
 public class HudButton extends JButton {
 
-    // 三态渐变色（上 -> 下）
+    // Three-state gradient colors (top -> bottom)
     private static final Color NORMAL_TOP = new Color(0x1565c0);
     private static final Color NORMAL_BOTTOM = new Color(0x0d47a1);
     private static final Color HOVER_TOP = new Color(0x29b6f6);
@@ -42,7 +42,7 @@ public class HudButton extends JButton {
         setForeground(Color.WHITE);
         setFont(getFont().deriveFont(java.awt.Font.BOLD, 15f));
         setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
-        // rollover 状态变化时重绘
+        // Repaint when the rollover state changes
         setRolloverEnabled(true);
     }
 
@@ -74,23 +74,23 @@ public class HudButton extends JButton {
 
         RoundRectangle2D shape = new RoundRectangle2D.Float(1, 1, w - 3, h - 3, ARC, ARC);
 
-        // 悬停发光外圈
+        // Glow ring on hover
         if (enabled && rollover) {
             g2.setColor(new Color(GLOW.getRed(), GLOW.getGreen(), GLOW.getBlue(), 90));
             g2.setStroke(new java.awt.BasicStroke(3f));
             g2.draw(new RoundRectangle2D.Float(0, 0, w - 1, h - 1, ARC + 2, ARC + 2));
         }
 
-        // 渐变填充
+        // Gradient fill
         g2.setPaint(new GradientPaint(0, 0, top, 0, h, bottom));
         g2.fill(shape);
 
-        // 边框
+        // Border
         g2.setStroke(new java.awt.BasicStroke(1.2f));
         g2.setColor(enabled ? BORDER : new Color(0x455a64));
         g2.draw(shape);
 
-        // 文字
+        // Text
         g2.setColor(enabled ? Color.WHITE : new Color(0x90a4ae));
         g2.setFont(getFont());
         java.awt.FontMetrics fm = g2.getFontMetrics();

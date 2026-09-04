@@ -4,31 +4,32 @@ import java.awt.image.BufferedImage;
 import java.util.List;
 
 /**
- * 视频解码器抽象接口 —— 预留扩展点。
+ * Abstract video decoder interface - reserved extension point.
  *
- * <p>{@link H264Decoder} 是基于 JavaCV/FFmpeg 的默认实现。日后可新增其他实现
- * （硬件解码、其他编码格式等）而无需改动 {@link VideoProcessor}。
+ * <p>{@link H264Decoder} is the default JavaCV/FFmpeg-based implementation. Other
+ * implementations (hardware decoding, other codecs, etc.) can be added later without
+ * changing {@link VideoProcessor}.
  */
 public interface VideoDecoder {
 
     /**
-     * 注入 avcC 格式的参数集 (SPS/PPS)。
-     * 对应 Python 版 H264Decoder.set_extradata。
+     * Injects an avcC-format parameter set (SPS/PPS).
+     * Corresponds to H264Decoder.set_extradata in the Python version.
      */
     void setExtradata(byte[] avccBytes);
 
     /**
-     * 解码缓冲区中的 Annex-B H.264 数据。
-     * 已成功消费的数据会从 buffer 中移除。
+     * Decodes Annex-B H.264 data from the buffer.
+     * Data successfully consumed is removed from the buffer.
      *
-     * @param buffer 累积的 H.264 流缓冲（原地修改）
-     * @return 本次解码得到的图像列表（可能为空）
+     * @param buffer accumulated H.264 stream buffer (modified in place)
+     * @return list of images decoded in this call (may be empty)
      */
     List<BufferedImage> parseAndDecode(StreamBuffer buffer);
 
-    /** 强制重置解码器（保留已缓存的 extradata）。 */
+    /** Forcefully resets the decoder (keeps the cached extradata). */
     void reset();
 
-    /** 释放底层资源。 */
+    /** Releases underlying resources. */
     void close();
 }

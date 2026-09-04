@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-UDP HEVC 视频流发送测试脚本。
+UDP HEVC video stream sender test script.
 
-向 UDP 3334 端口发送 HEVC 分片包，模拟视频流发送端。
-包格式 (big-endian):
+Sends fragmented HEVC packets to UDP port 3334 to simulate a video stream sender.
+Packet format (big-endian):
     frame_id (uint16) + frag_id (uint16) + total_bytes (uint32) + HEVC data
 
-用法:
-    # 发送一个测试文件
+Usage:
+    # Send a test file
     python udp_test_sender.py --file test.hevc --host 127.0.0.1 --port 3334
 
-    # 自动生成 HEVC 测试流 (需要 ffmpeg)
+    # Auto-generate a HEVC test stream (requires ffmpeg)
     python udp_test_sender.py --generate --host 127.0.0.1 --port 3334
 """
 
@@ -24,11 +24,11 @@ import time
 
 
 def send_hevc_file(filepath: str, host: str, port: int, frag_size: int = 1400):
-    """读取 HEVC Annex-B 文件，按帧切分后通过 UDP 发送。"""
+    """Read a HEVC Annex-B file, split it into frames, and send them over UDP."""
     with open(filepath, "rb") as f:
         data = f.read()
 
-    # 按 Annex-B 起始码切帧
+    # Split into frames by Annex-B start codes
     frames = split_annexb_frames(data)
     if not frames:
         print("[错误] 未找到有效的 HEVC 帧 (检查是否有 0x00000001 起始码)")
@@ -46,7 +46,7 @@ def send_hevc_file(filepath: str, host: str, port: int, frag_size: int = 1400):
             chunk = frame_data[offset:offset + frag_size]
             offset += len(chunk)
 
-            # 构造头部: frame_id(2B) + frag_id(2B) + total_bytes(4B)
+            # Build header: frame_id(2B) + frag_id(2B) + total_bytes(4B)
             header = struct.pack("!HHI", frame_id, frag_id, total)
             packet = header + chunk
 
@@ -61,7 +61,7 @@ def send_hevc_file(filepath: str, host: str, port: int, frag_size: int = 1400):
 
 
 def generate_and_send(host: str, port: int, frag_size: int = 1400):
-    """用 ffmpeg 生成 HEVC 测试流并通过管道发送。"""
+    """Generate a HEVC test stream with ffmpeg and send it."""
     import os
     import tempfile
 
@@ -88,8 +88,8 @@ def generate_and_send(host: str, port: int, frag_size: int = 1400):
 
 
 def split_annexb_frames(data: bytes) -> list[bytes]:
-    """按 Annex-B 4-byte start code (0x00000001) 切分帧。
-    第一个起始码之前的数据跳过，两个起始码之间的数据为一个帧。
+    """Split frames by the Annex-B 4-byte start code (0x00000001).
+    Data before the first start code is skipped; data between two start codes is one frame.
     """
     frames = []
     start_code = b"\x00\x00\x00\x01"
@@ -106,19 +106,19 @@ def split_annexb_frames(data: bytes) -> list[bytes]:
         start = positions[i]
         end = positions[i + 1] if i + 1 < len(positions) else len(data)
         frame = data[start:end]
-        if len(frame) > 4:  # 跳过空的起始码
+        if len(frame) > 4:  # skip empty start codes
             frames.append(frame)
 
     return frames
 
 
 def _config_path() -> str:
-    """config.json 在项目根目录（本脚本位于 tools/ 下）。"""
+    """config.json lives in the project root (this script is under tools/)."""
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 
 
 def load_udp_config() -> dict:
-    """从 config.json 读取 udp 段，作为默认值。"""
+    """Read the "udp" section from config.json to use as defaults."""
     try:
         import json
         with open(_config_path(), encoding="utf-8") as f:
@@ -128,7 +128,7 @@ def load_udp_config() -> dict:
 
 
 def main():
-    # 先读 config.json 的 udp 段，命令行参数覆盖
+    # Read the udp section of config.json first; command-line arguments override it
     cfg = load_udp_config()
 
     parser = argparse.ArgumentParser(
@@ -168,17 +168,17 @@ def main():
     else:
         print("[提示] 请指定 --file 或 --generate")
         print()
-        # 演示模式：手动构造一个最简 HEVC 帧发送
+        # Demo mode: manually build and send a minimal HEVC frame
         print("发送演示包 (手动构造 HEVC Annex-B 数据)...")
         demo_send(host, port, args.frag_size)
 
 
 def demo_send(host: str, port: int, frag_size: int):
-    """演示：发送几个手动的空帧 (仅用于测试包格式解析，解码器不会产生图像)。"""
+    """Demo: send a few hand-crafted parameter-set frames (for testing packet format parsing only; no decodable picture is produced)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    # HEVC Annex-B: VPS + SPS + PPS + IDR (简单的测试模式)
-    # 这些是手工构造的最小参数集 (仅供测试包收发，不会解码出有效画面)
+    # HEVC Annex-B: VPS + SPS + PPS + IDR (simple test pattern)
+    # These are hand-crafted minimal parameter sets (only for exercising packet send/receive; no valid picture is decoded)
     demo_frames = [
         # VPS (NAL type 32)
         b"\x00\x00\x00\x01\x40\x01\x0c\x01\xff\xff\x01\x60\x00\x00\x03\x00\xb0\x00\x00\x03\x00\x00\x03\x00\x5d",

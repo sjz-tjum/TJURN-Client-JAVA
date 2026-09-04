@@ -9,19 +9,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.function.Consumer;
 
 /**
- * 客户端直连的标点广播通道（UDP 广播，无 broker、无 protobuf）。
+ * Direct client-to-client marker broadcast channel (UDP broadcast; no broker, no protobuf).
  *
- * <p>同一以太网内的所有客户端监听固定 UDP 端口；某台标点时向局域网广播地址发送一条
- * 简单文本消息 {@code PING,x,y,sender}，其余客户端（含发送者自己）都能收到。
+ * <p>All clients on the same Ethernet listen on a fixed UDP port; when one marks a point it sends
+ * a simple text message {@code PING,x,y,sender} to the LAN broadcast address, and every other
+ * client (including the sender itself) receives it.
  *
- * <p>消息格式（纯文本，逗号分隔）：
+ * <p>Message format (plain text, comma-separated):
  * <pre>
  *   PING,12.5,7.25,clientId
  * </pre>
  */
 public class PingChannel implements AutoCloseable {
 
-    /** 收到的标点消息。 */
+    /** A received marker message. */
     public record PingMessage(float x, float y, String sender) {
     }
 
@@ -34,9 +35,9 @@ public class PingChannel implements AutoCloseable {
     private Thread receiveThread;
 
     /**
-     * @param port          监听/广播端口（同一局域网内所有客户端一致）
-     * @param broadcastAddr 局域网广播地址，如 {@code 255.255.255.255}
-     * @param listener      收到标点时的回调（在接收线程执行）
+     * @param port          Listen/broadcast port (identical across all clients on the same LAN)
+     * @param broadcastAddr LAN broadcast address, e.g. {@code 255.255.255.255}
+     * @param listener      Callback invoked when a marker is received (runs on the receive thread)
      */
     public PingChannel(int port, String broadcastAddr, Consumer<PingMessage> listener) {
         this.port = port;
@@ -44,12 +45,12 @@ public class PingChannel implements AutoCloseable {
         this.listener = listener;
     }
 
-    /** 开始监听广播（独立接收线程）。 */
+    /** Starts listening for broadcasts (dedicated receive thread). */
     public void start() {
         try {
             socket = new DatagramSocket(port);
             socket.setBroadcast(true);
-            socket.setSoTimeout(200);   // 周期性醒来检查 running
+            socket.setSoTimeout(200);   // Wake periodically to check running
             receiveThread = new Thread(this::receiveLoop, "PingChannel");
             receiveThread.setDaemon(true);
             receiveThread.start();
@@ -60,11 +61,11 @@ public class PingChannel implements AutoCloseable {
     }
 
     /**
-     * 广播一条标点。
+     * Broadcasts a marker.
      *
-     * @param x      世界坐标 X（米）
-     * @param y      世界坐标 Y（米）
-     * @param sender 发送者客户端 ID
+     * @param x      World coordinate X (meters)
+     * @param y      World coordinate Y (meters)
+     * @param sender Sender client ID
      */
     public void broadcastPing(float x, float y, String sender) {
         try {
@@ -93,7 +94,7 @@ public class PingChannel implements AutoCloseable {
                     listener.accept(pm);
                 }
             } catch (SocketTimeoutException e) {
-                // 正常超时，继续循环
+                // Normal timeout; continue the loop
             } catch (Exception e) {
                 if (running) {
                     System.err.println("[Ping] 接收异常: " + e.getMessage());
@@ -102,7 +103,7 @@ public class PingChannel implements AutoCloseable {
         }
     }
 
-    /** 解析文本消息；非 PING 前缀或格式错误返回 null。 */
+    /** Parses a text message; returns null if it lacks the PING prefix or is malformed. */
     public static PingMessage parse(String msg) {
         if (msg == null || !msg.startsWith("PING,")) {
             return null;

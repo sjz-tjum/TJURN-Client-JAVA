@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-UDP HEVC 视频流发送测试工具 —— MP4 输入版。
+UDP HEVC video stream sender test tool -- MP4 input version.
 
-从 MP4 (HEVC) 解封装，把 length-prefixed (HVCC) 包转成 Annex-B (起始码)，
-按 UDP 协议分片发送。
+Demuxes an MP4 (HEVC), converts length-prefixed (HVCC) packets to Annex-B (start codes),
+and sends them fragmented according to the UDP protocol.
 
-UDP 包格式 (big-endian):
-    frame_id (uint16) + frag_id (uint16) + total_bytes (uint32) + HEVC 数据
+UDP packet format (big-endian):
+    frame_id (uint16) + frag_id (uint16) + total_bytes (uint32) + HEVC data
 
-依赖: pip install av  (PyAV)
+Dependencies: pip install av  (PyAV)
 
-用法:
-    python udp_mp4_sender.py "视频.mp4"
-    python udp_mp4_sender.py "视频.mp4" --host 127.0.0.1 --port 3334
-    python udp_mp4_sender.py "视频.mp4" --speed 5        # 5倍速发送
-    python udp_mp4_sender.py "视频.mp4" --max-frames 300 # 只发前300帧
+Usage:
+    python udp_mp4_sender.py "video.mp4"
+    python udp_mp4_sender.py "video.mp4" --host 127.0.0.1 --port 3334
+    python udp_mp4_sender.py "video.mp4" --speed 5        # send at 5x speed
+    python udp_mp4_sender.py "video.mp4" --max-frames 300 # send only the first 300 frames
 
-host/port 默认从 config.json 的 udp 段读取。
+host/port default to the "udp" section of config.json.
 """
 
 import argparse
@@ -31,12 +31,12 @@ import av
 
 
 def _config_path() -> str:
-    """config.json 在项目根目录（本脚本位于 tools/ 下）。"""
+    """config.json lives in the project root (this script is under tools/)."""
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 
 
 def load_udp_config() -> dict:
-    """从 config.json 读取 udp 段，作为默认值。"""
+    """Read the "udp" section from config.json to use as defaults."""
     try:
         with open(_config_path(), encoding="utf-8") as f:
             return json.load(f).get("udp", {})
@@ -45,8 +45,8 @@ def load_udp_config() -> dict:
 
 
 def packet_to_annexb(packet_bytes: bytes) -> bytes:
-    """把 MP4 的 length-prefixed (HVCC) 包转成 Annex-B (起始码 00 00 00 01)。
-    HEVC 在 MP4 中每个 NAL 前是 4 字节大端长度。"""
+    """Convert MP4 length-prefixed (HVCC) packets to Annex-B (start codes 00 00 00 01).
+    Each HEVC NAL in MP4 is preceded by a 4-byte big-endian length."""
     out = bytearray()
     i = 0
     n = len(packet_bytes)
@@ -54,7 +54,7 @@ def packet_to_annexb(packet_bytes: bytes) -> bytes:
         length = int.from_bytes(packet_bytes[i:i + 4], "big")
         i += 4
         if length <= 0 or i + length > n:
-            break  # 数据不完整，停止
+            break  # incomplete data; stop
         out += b"\x00\x00\x00\x01"
         out += packet_bytes[i:i + length]
         i += length
@@ -62,15 +62,16 @@ def packet_to_annexb(packet_bytes: bytes) -> bytes:
 
 
 def parse_hvcc(extradata: bytes) -> list[tuple[int, bytes]]:
-    """解析 hvcC (HEVCDecoderConfigurationRecord)，返回 [(nal_type, annexb), ...]。
+    """Parse hvcC (HEVCDecoderConfigurationRecord); returns [(nal_type, annexb), ...].
 
-    参数集 (VPS/SPS/PPS) 通常只存在 MP4 的 extradata 里，包流中没有，
-    必须解析出来拼到帧前面，接收端才能初始化解码器。
+    Parameter sets (VPS/SPS/PPS) usually live only in the MP4 extradata, not in the packet
+    stream, so they must be parsed out and prepended to frames for the receiver's decoder
+    to initialize.
     """
     arrays = []
     if len(extradata) < 23:
         return arrays
-    num_arrays = extradata[22]          # 固定头 23 字节，之后是参数集数组
+    num_arrays = extradata[22]          # 23-byte fixed header, then the parameter set arrays
     pos = 23
     for _ in range(num_arrays):
         if pos + 3 > len(extradata):
@@ -92,7 +93,7 @@ def parse_hvcc(extradata: bytes) -> list[tuple[int, bytes]]:
 
 
 def build_param_prefix(extradata: bytes) -> bytes:
-    """从 hvcC 提取 VPS/SPS/PPS 并拼成 Annex-B 前缀。"""
+    """Extract VPS/SPS/PPS from hvcC and assemble them into an Annex-B prefix."""
     vps = sps = pps = None
     for nal_type, annexb in parse_hvcc(extradata):
         if nal_type == 32 and vps is None:
@@ -129,7 +130,7 @@ def send_mp4(path: str, host: str, port: int, frag_size: int = 1400,
     print(f"  分片大小: {frag_size} B")
     print("══════════════════════════════════════════")
 
-    # 从 hvcC 提取 VPS/SPS/PPS，拼到首帧和关键帧前（包流本身不含参数集）
+    # Extract VPS/SPS/PPS from hvcC and prepend them to the first frame and key frames (the packet stream itself carries no parameter sets)
     extradata = bytes(stream.codec_context.extradata) if stream.codec_context.extradata else b""
     param_prefix = build_param_prefix(extradata)
     if param_prefix:

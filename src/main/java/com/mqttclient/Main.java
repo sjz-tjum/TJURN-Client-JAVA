@@ -6,10 +6,11 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
 /**
- * 程序入口。
+ * Program entry point.
  *
- * <p>对应 Python 版 main.py：启动 Swing 事件循环并显示主窗口。
- * Python 版针对 Qt 的平台环境变量设置 (xcb/windows) 在 Swing 下不需要。
+ * <p>Mirrors main.py in the Python version: starts the Swing event loop and shows the main window.
+ * The Qt-specific platform environment variables (xcb/windows) used by the Python version are not
+ * needed under Swing.
  */
 public class Main {
 

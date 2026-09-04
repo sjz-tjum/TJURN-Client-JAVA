@@ -14,13 +14,13 @@ import java.util.concurrent.BlockingQueue;
 import java.util.function.BiConsumer;
 
 /**
- * MQTT 接收器封装。
+ * MQTT receiver wrapper.
  *
- * <p>对应 Python 版 mqtt_client/client.py 的 MQTTReceiver：
+ * <p>Corresponds to MQTTReceiver in the Python version (mqtt_client/client.py):
  * <ul>
- *   <li>使用 Eclipse Paho 客户端，网络接收在独立线程中运行</li>
- *   <li>收到的消息 payload 放入有界队列，供处理线程消费</li>
- *   <li>队列满时丢弃最旧的一条消息（对应 put_nowait + 丢弃逻辑）</li>
+ *   <li>Uses the Eclipse Paho client; network reception runs on a dedicated thread</li>
+ *   <li>Incoming message payloads go into a bounded queue consumed by the processing thread</li>
+ *   <li>When the queue is full, drops the oldest message (mirrors the put_nowait + drop logic)</li>
  * </ul>
  */
 public class MqttReceiver implements MqttCallback {
@@ -29,23 +29,23 @@ public class MqttReceiver implements MqttCallback {
     private final int brokerPort;
     private final String clientId;
 
-    /** 线程安全的有界消息队列，存放原始 payload (对应 queue.Queue(maxsize=500)) */
+    /** Thread-safe bounded message queue holding raw payloads (mirrors queue.Queue(maxsize=500)) */
     private final BlockingQueue<byte[]> messageQueue =
             new ArrayBlockingQueue<>(Constants.MESSAGE_QUEUE_CAPACITY);
 
     private MqttAsyncClient client;
     private volatile boolean connected = false;
 
-    /** 连接状态变化回调 (connected, message)，对应 connection_status 信号 */
+    /** Connection-state change callback (connected, message); mirrors the connection_status signal */
     private BiConsumer<Boolean, String> connectionStatusListener;
 
-    /** 机器人位置消息回调（收到 {@link Constants#ROBOT_POSITION_TOPIC} 主题的原始 payload）。 */
+    /** Robot-position message callback (raw payload for {@link Constants#ROBOT_POSITION_TOPIC}). */
     private java.util.function.Consumer<byte[]> robotPositionListener;
 
-    /** 机器人静态状态回调（robot_type / level / max_health / max_heat）。 */
+    /** Robot static-status callback (robot_type / level / max_health / max_heat). */
     private java.util.function.Consumer<byte[]> robotStaticStatusListener;
 
-    /** 机器人动态状态回调（current_health / current_heat / current_experience / experience_for_upgrade）。 */
+    /** Robot dynamic-status callback (current_health / current_heat / current_experience / experience_for_upgrade). */
     private java.util.function.Consumer<byte[]> robotDynamicStatusListener;
 
     public MqttReceiver(String brokerHost, int brokerPort, String clientId) {
@@ -58,17 +58,17 @@ public class MqttReceiver implements MqttCallback {
         this.connectionStatusListener = listener;
     }
                                                                   
-    /** 注册机器人位置监听器；收到位置主题消息时以原始 payload 回调（在 Paho 网络线程执行）。 */
+    /** Registers the robot-position listener; invoked with the raw payload when a position message arrives (runs on the Paho network thread). */
     public void setRobotPositionListener(java.util.function.Consumer<byte[]> listener) {
         this.robotPositionListener = listener;
     }
 
-    /** 注册机器人静态状态监听器。 */
+    /** Registers the robot static-status listener. */
     public void setRobotStaticStatusListener(java.util.function.Consumer<byte[]> listener) {
         this.robotStaticStatusListener = listener;
     }
 
-    /** 注册机器人动态状态监听器。 */
+    /** Registers the robot dynamic-status listener. */
     public void setRobotDynamicStatusListener(java.util.function.Consumer<byte[]> listener) {
         this.robotDynamicStatusListener = listener;
     }
@@ -81,7 +81,7 @@ public class MqttReceiver implements MqttCallback {
         return connected;
     }
 
-    /** 连接到 MQTT 服务器。对应 connect() + loop_start()。 */
+    /** Connects to the MQTT broker. Mirrors connect() + loop_start(). */
     public boolean connect() {
         try {
             String serverUri = "tcp://" + brokerHost + ":" + brokerPort;
@@ -100,7 +100,7 @@ public class MqttReceiver implements MqttCallback {
                     connected = true;
                     System.out.printf("[MQTT] 连接成功: %s:%d%n", brokerHost, brokerPort);
                     notifyStatus(true, "连接成功");
-                    // 连接成功后自动订阅
+                    // Auto-subscribe once connected
                     for (String topic : Constants.SUBSCRIBE_TOPICS) {
                         subscribe(topic, Constants.QOS);
                     }
@@ -121,7 +121,7 @@ public class MqttReceiver implements MqttCallback {
         }
     }
 
-    /** 断开连接。对应 disconnect() + loop_stop()。 */
+    /** Disconnects. Mirrors disconnect() + loop_stop(). */
     public void disconnect() {
         try {
             if (client != null) {
@@ -163,7 +163,7 @@ public class MqttReceiver implements MqttCallback {
         }
     }
 
-    /** 发布消息到指定主题。 */
+    /** Publishes a message to the given topic. */
     public void publish(String topic, byte[] payload, int qos) {
         try {
             if (client == null || !client.isConnected()) {
@@ -189,14 +189,14 @@ public class MqttReceiver implements MqttCallback {
     }
 
     /**
-     * 消息到达回调（在 Paho 网络线程中执行）。
-     * 仅做最轻量的入队操作，队列满时丢弃最旧消息。
-     * 对应 Python 的 _on_message + put_nowait 逻辑。
+     * Message-arrival callback (runs on the Paho network thread).
+     * Only enqueues as cheaply as possible, dropping the oldest message when the queue is full.
+     * Mirrors Python's _on_message + put_nowait logic.
      */
     @Override
     public void messageArrived(String topic, MqttMessage message) {
         byte[] payload = message.getPayload();
-        // 机器人状态走独立回调，不进入视频队列
+        // Robot status uses its own callbacks, not the video queue
         if (Constants.ROBOT_POSITION_TOPIC.equals(topic)) {
             if (robotPositionListener != null) {
                 try {
@@ -228,7 +228,7 @@ public class MqttReceiver implements MqttCallback {
             return;
         }
         if (!messageQueue.offer(payload)) {
-            // 队列满，丢弃最旧的一条再放入新消息
+            // Queue is full: drop the oldest message, then insert the new one
             messageQueue.poll();
             messageQueue.offer(payload);
             System.out.println("[MQTT] 警告: 消息队列已满，丢弃旧消息");

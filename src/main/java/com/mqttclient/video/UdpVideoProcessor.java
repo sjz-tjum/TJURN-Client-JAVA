@@ -19,16 +19,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * UDP HEVC 视频流接收处理器。
+ * UDP HEVC video stream receiver processor.
  *
- * <p>监听 UDP 端口接收 HEVC 分片包，按帧重组后解码显示。
+ * <p>Listens on a UDP port, receives HEVC fragment packets, reassembles them into
+ * frames, then decodes and displays them.
  *
- * <p>UDP 包格式 (big-endian):
+ * <p>UDP packet format (big-endian):
  * <pre>
- *   Bytes 0-1: frame_id  (uint16) — 帧编号
- *   Bytes 2-3: frag_id   (uint16) — 帧内分片序号
- *   Bytes 4-7: total_len (uint32) — 当前帧总字节数
- *   Bytes 8+:  HEVC 码流数据
+ *   Bytes 0-1: frame_id  (uint16) — frame number
+ *   Bytes 2-3: frag_id   (uint16) — fragment index within the frame
+ *   Bytes 4-7: total_len (uint32) — total byte length of the current frame
+ *   Bytes 8+:  HEVC stream data
  * </pre>
  */
 public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
@@ -40,35 +41,35 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
     private volatile boolean running = true;
     private volatile boolean paramSetsCached;
 
-    // 缓存的 VPS/SPS/PPS（Annex-B 起始码前缀的裸 NAL 单元）
+    // Cached VPS/SPS/PPS (raw NAL units prefixed with Annex-B start codes)
     private byte[] cachedVps;
     private byte[] cachedSps;
     private byte[] cachedPps;
 
-    // 帧重组器（线程安全，分片缓存 + 按序拼接）
+    // Frame reassembler (thread-safe; caches fragments and concatenates them in order)
     private final UdpFrameReassembler reassembler;
 
-    // 接收线程 → 解码线程 的帧队列（解耦，避免解码阻塞接收导致 UDP 缓冲溢出丢包）
+    // Frame queue from the receive thread to the decode thread (decouples the two so decoding cannot block reception and cause UDP buffer-overflow loss)
     private final ArrayBlockingQueue<FrameData> decodeQueue = new ArrayBlockingQueue<>(60);
     private Thread decodeThread;
 
-    // 最新帧
+    // Latest frame
     private final Object frameLock = new Object();
     private BufferedImage latestFrame;
     private int latestSeq;
 
-    // 统计
+    // Statistics
     private volatile long receivedPackets;
     private volatile long decodedFrames;
     private volatile long lostFragments;
 
-    // 扩展点
+    // Extension points
     private final List<FrameListener> frameListeners = new CopyOnWriteArrayList<>();
     private final List<PacketProcessor> packetProcessors = new CopyOnWriteArrayList<>();
     private StatsListener statsListener;
     private Consumer<String> statusListener;
 
-    /** @param host 绑定 IP；视频分辨率不受限，按流本身尺寸输出。 */
+    /** @param host the bind IP; video resolution is not limited — output follows the stream size. */
     public UdpVideoProcessor(String host) {
         this(host, new HevcDecoder(0, 0));
     }
@@ -81,7 +82,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
                 msg -> emitStatus(msg));
     }
 
-    // ── 扩展点 ──────────────────────────────────────────────────────
+    // ── Extension points ──────────────────────────────────────────────────────
 
     public void addFrameListener(FrameListener l) { frameListeners.add(l); }
     public void addPacketProcessor(PacketProcessor p) { packetProcessors.add(p); }
@@ -94,7 +95,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
     @Override
     public String getSourceLabel() { return "UDP"; }
 
-    // ── 帧访问 ─────────────────────────────────────────────────────
+    // ── Frame access ─────────────────────────────────────────────────────
 
     @Override
     public BufferedImage takeLatestFrameForRender() {
@@ -113,9 +114,9 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
     @Override
     public long getLostPackets() { return lostFragments; }
 
-    // ── 生命周期 ─────────────────────────────────────────────────────
+    // ── Lifecycle ─────────────────────────────────────────────────────
 
-    /** 启动：接收线程（本线程）+ 解码线程。 */
+    /** Starts the receive thread (this thread) and the decode thread. */
     @Override
     public synchronized void start() {
         super.start();
@@ -124,7 +125,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         decodeThread.start();
     }
 
-    /** 解码线程主循环：消费完整帧 → 解码。 */
+    /** Decode thread main loop: consume complete frames and decode them. */
     private void decodeLoop() {
         while (running || !decodeQueue.isEmpty()) {
             FrameData frame;
@@ -140,7 +141,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         }
     }
 
-    // ── 主循环（接收线程）────────────────────────────────────────────
+    // ── Main loop (receive thread) ────────────────────────────────────────────
 
     @Override
     public void run() {
@@ -167,15 +168,15 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
                     processPacket(data);
 
                 } catch (SocketTimeoutException e) {
-                    // 正常超时，继续循环
+                    // Normal timeout; keep looping
                 } catch (Exception e) {
                     emitStatus("UDP 接收异常: " + e.getMessage());
                 }
 
-                // 清理超时帧
+                // Clean up timed-out frames
                 cleanupStaleFrames();
 
-                // 统计（每秒）
+                // Statistics (per second)
                 long now = System.currentTimeMillis();
                 if (now - lastStatTime >= 1000) {
                     if (statsListener != null) {
@@ -194,9 +195,9 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         }
     }
 
-    // ── 包处理 ─────────────────────────────────────────────────────
+    // ── Packet handling ─────────────────────────────────────────────────────
 
-    /** 解析单个 UDP 包并重组帧。 */
+    /** Parses a single UDP packet and reassembles it into a frame. */
     private void processPacket(byte[] data) {
         if (data.length < 8) {
             return;
@@ -211,24 +212,24 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
 
         receivedPackets++;
 
-        // 扩展点钩子
+        // Extension point hooks
         for (PacketProcessor p : packetProcessors) {
             try { p.onPacket(frameId, 0, hevcData); } catch (Exception ignore) {}
         }
 
-        // 重组帧；返回非 null 表示该帧已收齐
+        // Reassemble the frame; a non-null return means the frame is complete
         byte[] frameData = reassembler.addFragment(frameId, fragId, hevcData, totalLen);
         if (frameData != null) {
             onFrameComplete(frameId, frameData);
         }
     }
 
-    /** 完整帧收到后（接收线程）：提取参数集 → 入队给解码线程。 */
+    /** After a complete frame arrives (receive thread): extract parameter sets, then enqueue it for the decode thread. */
     private void onFrameComplete(int frameId, byte[] frameData) {
-        // 自动检测并缓存 VPS/SPS/PPS（接收线程做，只扫描不耗时）
+        // Auto-detect and cache VPS/SPS/PPS (done on the receive thread; scan only, no heavy work)
         extractParamSets(frameData);
 
-        // 入队给解码线程；队列满时丢最旧帧（低延迟优先）
+        // Enqueue for the decode thread; when the queue is full, drop the oldest frame (low latency first)
         if (!decodeQueue.offer(new FrameData(frameId, frameData))) {
             decodeQueue.poll();
             decodeQueue.offer(new FrameData(frameId, frameData));
@@ -236,9 +237,9 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         }
     }
 
-    /** 解码线程：把缓存参数集 + 帧数据写入流缓冲并解码。 */
+    /** Decode thread: writes the cached parameter sets plus frame data into the stream buffer and decodes. */
     private void decodeFrame(FrameData frame) {
-        // 将缓存参数集 + 帧数据写入流缓冲
+        // Write the cached parameter sets plus frame data into the stream buffer
         if (paramSetsCached) {
             if (cachedVps != null) streamBuffer.extend(cachedVps);
             if (cachedSps != null) streamBuffer.extend(cachedSps);
@@ -246,7 +247,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         }
         streamBuffer.extend(frame.data);
 
-        // 解码
+        // Decode
         List<BufferedImage> images = decoder.parseAndDecode(streamBuffer);
         for (BufferedImage img : images) {
             decodedFrames++;
@@ -260,11 +261,11 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         }
     }
 
-    // ── VPS/SPS/PPS 自动提取 ───────────────────────────────────────
+    // ── VPS/SPS/PPS auto extraction ───────────────────────────────────────
 
     /**
-     * 从 HEVC Annex-B 数据中提取 VPS/SPS/PPS（NAL type 32/33/34）并缓存。
-     * 只执行一次，后续帧复用缓存。
+     * Extracts and caches VPS/SPS/PPS (NAL types 32/33/34) from HEVC Annex-B data.
+     * Runs only once; later frames reuse the cached parameter sets.
      */
     private void extractParamSets(byte[] data) {
         if (paramSetsCached) return;
@@ -278,8 +279,8 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
             int headerPos = start + nalLen;
             if (headerPos + 1 >= data.length) break;
 
-            // HEVC NAL header 是 2 字节
-            int nalType = (data[headerPos] & 0x7E) >> 1;  // 跳过 forbidden bit，取 6 位
+            // The HEVC NAL header is 2 bytes
+            int nalType = (data[headerPos] & 0x7E) >> 1;  // skip the forbidden bit; take the next 6 bits
 
             int nextStart = findStartCode(data, headerPos + 1);
             int nalEnd = (nextStart >= 0) ? nextStart : data.length;
@@ -295,7 +296,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
             if (cachedVps != null && cachedSps != null && cachedPps != null) {
                 paramSetsCached = true;
                 emitStatus("已从流内提取并缓存 VPS/SPS/PPS");
-                // 注入为解码器 extradata (Annex-B)，避免依赖 in-band 参数顺序
+                // Inject as decoder extradata (Annex-B) to avoid depending on in-band parameter order
                 try {
                     byte[] annexb = new byte[cachedVps.length + cachedSps.length + cachedPps.length];
                     System.arraycopy(cachedVps, 0, annexb, 0, cachedVps.length);
@@ -322,14 +323,14 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         return -1;
     }
 
-    // ── 超时清理 ───────────────────────────────────────────────────
+    // ── Timeout cleanup ───────────────────────────────────────────────────
 
     private void cleanupStaleFrames() {
         long now = System.currentTimeMillis();
         lostFragments += reassembler.cleanupStale(now);
     }
 
-    // ── 生命周期 ───────────────────────────────────────────────────
+    // ── Lifecycle ───────────────────────────────────────────────────
 
     @Override
     public void stopProcessor() {
@@ -355,7 +356,7 @@ public class UdpVideoProcessor extends Thread implements VideoStreamProcessor {
         }
     }
 
-    /** 一帧数据（帧号 + Annex-B 字节），由接收线程入队、解码线程消费。 */
+    /** A frame of data (frame id + Annex-B bytes), enqueued by the receive thread and consumed by the decode thread. */
     private record FrameData(int id, byte[] data) {
     }
 }

@@ -12,24 +12,24 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * 运行时 JSON 配置加载器。
+ * Runtime JSON configuration loader.
  *
- * <p>从 {@code config.json} 加载配置，供 {@link Constants} 在启动时和热重载时读取。
- * 修改 JSON 后无需重新编译。
+ * <p>Loads configuration from {@code config.json}, read by {@link Constants} at startup and on
+ * hot-reload. Editing the JSON does not require recompilation.
  *
- * <p>查找顺序：
+ * <p>Lookup order:
  * <ol>
- *   <li>系统属性 {@code -Dmqtt.config=路径}</li>
- *   <li>工作目录下的 {@code config.json}</li>
- *   <li>classpath 下的 {@code /config.json}</li>
- *   <li>全部找不到时使用内置默认值</li>
+ *   <li>System property {@code -Dmqtt.config=path}</li>
+ *   <li>{@code config.json} in the working directory</li>
+ *   <li>{@code /config.json} on the classpath</li>
+ *   <li>Built-in defaults when none of the above is found</li>
  * </ol>
  */
 public final class Config {
 
-    /** 默认配置文件名称（工作目录 / classpath）。 */
+    /** Default config file name (working directory / classpath). */
     public static final String CONFIG_FILE = "config.json";
-    /** 可通过 -Dmqtt.config=路径 覆盖配置文件位置。 */
+    /** Overrides the config file location via -Dmqtt.config=path. */
     public static final String CONFIG_PROPERTY = "mqtt.config";
 
     private static JsonObject root = new JsonObject();
@@ -38,7 +38,7 @@ public final class Config {
     private Config() {
     }
 
-    /** 重新加载配置文件。 */
+    /** Reloads the config file. */
     public static synchronized void load(String fileName) {
         try {
             String prop = System.getProperty(CONFIG_PROPERTY);
@@ -59,7 +59,7 @@ public final class Config {
                 return;
             }
 
-            // 回退到 classpath
+            // Fall back to the classpath
             InputStream in = Config.class.getResourceAsStream("/" + fileName);
             if (in != null) {
                 String content = new String(in.readAllBytes(), StandardCharsets.UTF_8);
@@ -77,7 +77,7 @@ public final class Config {
         }
     }
 
-    /** 配置文件最后修改时间（毫秒）；无文件返回 0，供热重载检测。 */
+    /** Last-modified time of the config file (ms); 0 when no file is present. Used for hot-reload detection. */
     public static synchronized long lastModified() {
         try {
             return currentPath == null ? 0L : Files.getLastModifiedTime(currentPath).toMillis();
@@ -90,7 +90,7 @@ public final class Config {
         return currentPath != null;
     }
 
-    // ── 类型化读取 ──────────────────────────────────────────────────
+    // ==== Typed reads ====
 
     private static JsonObject section(String section) {
         if (root.has(section) && root.get(section).isJsonObject()) {

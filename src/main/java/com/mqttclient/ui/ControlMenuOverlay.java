@@ -16,11 +16,12 @@ import java.awt.RenderingHints;
 import java.awt.geom.RoundRectangle2D;
 
 /**
- * 控制菜单叠加层（类似游戏的 ESC 暂停菜单）。
+ * Control menu overlay (like a game's ESC pause menu).
  *
- * <p>铺满整层，绘制半透明暗化遮罩，中央放一张圆角卡片，卡片内纵向排列
- * 一组 {@link HudButton}。按钮供 {@link MainWindow} 取用以挂接动作与
- * 管理启用状态。点击卡片外区域可关闭（回调由 MainWindow 设置）。
+ * <p>Fills the entire layer, draws a semi-transparent dimming scrim, and centers a rounded
+ * card that vertically stacks a set of {@link HudButton}s. The buttons are exposed for
+ * {@link MainWindow} to attach actions and manage enabled state. Clicking outside the card
+ * closes the menu (callback set by MainWindow).
  */
 public class ControlMenuOverlay extends JPanel {
 
@@ -37,7 +38,7 @@ public class ControlMenuOverlay extends JPanel {
 
     private final JPanel card;
 
-    /** 点击卡片外遮罩区域时的回调（用于关闭菜单）。 */
+    /** Callback invoked when the scrim area outside the card is clicked (used to close the menu). */
     private Runnable onScrimClick;
 
     public ControlMenuOverlay() {
@@ -66,7 +67,7 @@ public class ControlMenuOverlay extends JPanel {
 
         add(card, new GridBagConstraints());
 
-        // 点击卡片外区域关闭；点击卡片内部不冒泡到这里
+        // Clicking outside the card closes the menu; clicks inside the card do not bubble here
         addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mousePressed(java.awt.event.MouseEvent e) {
@@ -90,7 +91,7 @@ public class ControlMenuOverlay extends JPanel {
         g2.dispose();
     }
 
-    /** 居中卡片：圆角深色半透明底板 + 发光边框。 */
+    /** Centered card: rounded, dark, semi-transparent background with a glowing border. */
     private static class CardPanel extends JPanel {
         @Override
         protected void paintComponent(Graphics g) {

@@ -22,14 +22,15 @@ import static org.bytedeco.ffmpeg.global.swscale.*;
 import static org.bytedeco.ffmpeg.presets.avutil.AVERROR_EAGAIN;
 
 /**
- * 基于 JavaCV / FFmpeg 的 H.264 解码器。
+ * JavaCV / FFmpeg-based H.264 decoder.
  *
- * <p>对应 Python 版 video/h264_decoder.py (PyAV 实现)：
+ * <p>Corresponds to the Python video/h264_decoder.py (PyAV implementation):
  * <ul>
- *   <li>创建 H.264 解码器上下文，多线程 (thread_count=8)、低延迟</li>
- *   <li>支持注入 avcC extradata (SPS/PPS)，重置时复用缓存</li>
- *   <li>按 Annex-B 起始码切分完整 NAL，逐包解码</li>
- *   <li>输出 BGR24，转 300x300 的 BufferedImage</li>
+ *   <li>Creates an H.264 decoder context with multithreading
+ *       (thread_count=8) and low latency</li>
+ *   <li>Supports injecting avcC extradata (SPS/PPS); reuses the cache on reset</li>
+ *   <li>Splits complete NALs by Annex-B start codes and decodes them one packet at a time</li>
+ *   <li>Outputs BGR24, converted to a 300x300 BufferedImage</li>
  * </ul>
  */
 public class H264Decoder implements VideoDecoder {
@@ -42,15 +43,15 @@ public class H264Decoder implements VideoDecoder {
     private AVCodecParserContext parser;
     private SwsContext swsCtx;
 
-    private byte[] cachedExtradata;   // 缓存 avcC，重置时复用
+    private byte[] cachedExtradata;   // Cache avcC, reused on reset
     private long frameCount = 0;
 
-    // ==== 调试：hex dump 收到的原始 H.264 流 ====
+    // ==== Debug: hex dump of the raw H.264 stream received ====
     private java.io.FileOutputStream dumpStream;
 
     /**
-     * 开始将解码器收到的原始 Annex-B 数据保存到文件，用于离线分析。
-     * 文件可用 ffplay / ffprobe 直接播放或检查。
+     * Starts saving the raw Annex-B data received by the decoder to a file for
+     * offline analysis. The file can be played or inspected with ffplay / ffprobe.
      */
     public synchronized void startDump(String filePath) {
         try {
@@ -75,7 +76,7 @@ public class H264Decoder implements VideoDecoder {
         resetCodec("init");
     }
 
-    /** 持有 BytePointer 引用，防止 GC 释放后 codecCtx.extradata 变成悬空指针。 */
+    /** Holds the BytePointer reference, preventing codecCtx.extradata from becoming a dangling pointer after GC. */
     private BytePointer extradataPtr;
 
     @Override
@@ -98,11 +99,11 @@ public class H264Decoder implements VideoDecoder {
             codecCtx.thread_count(Constants.DECODER_THREAD_COUNT);
             codecCtx.flags(codecCtx.flags() | AV_CODEC_FLAG_LOW_DELAY);
 
-            // 注入缓存的 extradata
+            // Inject the cached extradata
             if (cachedExtradata != null && cachedExtradata.length > 0) {
                 extradataPtr = new BytePointer(cachedExtradata.length + AV_INPUT_BUFFER_PADDING_SIZE);
                 extradataPtr.put(cachedExtradata, 0, cachedExtradata.length);
-                // 填充区置零（new BytePointer 已自动清零，此处显式确保安全）
+                // Zero the padding area (new BytePointer is already zeroed; explicit zeroing ensures safety)
                 for (int i = 0; i < AV_INPUT_BUFFER_PADDING_SIZE; i++) {
                     extradataPtr.put((long) cachedExtradata.length + i, (byte) 0);
                 }
@@ -133,8 +134,9 @@ public class H264Decoder implements VideoDecoder {
     }
 
     /**
-     * 从缓冲区提取所有完整 NAL（含起始码），返回已消费字节数。
-     * 对应 _split_complete_nalus：最后一个不完整 NAL 会保留。
+     * Extracts all complete NALs (including start codes) from the buffer and
+     * returns the number of bytes consumed. Corresponds to _split_complete_nalus:
+     * the last incomplete NAL is retained.
      */
     private int findConsumedLength(StreamBuffer buffer) {
         int consumed = 0;
@@ -147,7 +149,7 @@ public class H264Decoder implements VideoDecoder {
             }
             int nextStart = buffer.findStartCode(start + 1);
             if (nextStart == -1) {
-                break; // 最后一个 NAL 可能不完整，保留
+                break; // The last NAL may be incomplete; keep it
             }
             consumed = nextStart;
             i = nextStart;
@@ -162,7 +164,7 @@ public class H264Decoder implements VideoDecoder {
             return images;
         }
 
-        // 对齐起始码
+        // Align to the start code
         int startPos = buffer.findStartCode(0);
         if (startPos == -1) {
             if (buffer.size() > Constants.STREAM_BUFFER_HARD_LIMIT) {
@@ -184,7 +186,7 @@ public class H264Decoder implements VideoDecoder {
         try {
             decodeAnnexB(dataToDecode, images);
             buffer.deleteFront(consumed);
-            // 只保留最新 5 帧（对应 images[-5:]）
+            // Keep only the latest 5 frames (corresponds to images[-5:])
             while (images.size() > 5) {
                 images.remove(0);
             }
@@ -194,9 +196,9 @@ public class H264Decoder implements VideoDecoder {
         return images;
     }
 
-    /** 用 parser + decoder 处理一段 Annex-B 数据。 */
+    /** Processes a chunk of Annex-B data using the parser + decoder. */
     private void decodeAnnexB(byte[] data, List<BufferedImage> out) {
-        // 调试：保存原始数据到文件
+        // Debug: save raw data to file
         if (dumpStream != null) {
             try {
                 dumpStream.write(data);
@@ -208,14 +210,14 @@ public class H264Decoder implements VideoDecoder {
         AVFrame frame = av_frame_alloc();
 
         try {
-            // 使用 av_new_packet: 内部用 av_malloc 分配，av_packet_free 用 av_free 释放
-            // 分配器一致，不会出现 malloc/av_free 混用的堆损坏
+            // av_new_packet allocates internally with av_malloc; av_packet_free frees with av_free.
+            // The allocator is consistent, so there is no heap corruption from mixing malloc/av_free.
             int paddedSize = data.length + AV_INPUT_BUFFER_PADDING_SIZE;
             if (av_new_packet(pkt, paddedSize) < 0) {
                 System.err.println("[Decoder] av_new_packet 分配失败");
                 return;
             }
-            // 拷贝数据（av_new_packet 已经将缓冲区清零，填充区自动为 0）
+            // Copy data (av_new_packet already zeroes the buffer, so padding is automatically 0)
             pkt.data().put(data, 0, data.length);
             pkt.size(data.length);
 
@@ -224,7 +226,7 @@ public class H264Decoder implements VideoDecoder {
             System.err.println("[Decoder] 解码异常: " + e.getMessage());
         } finally {
             av_frame_free(frame);
-            av_packet_free(pkt);   // 安全释放 av_malloc 内存
+            av_packet_free(pkt);   // Safely free the av_malloc memory
         }
     }
     private void decodePacket(AVPacket pkt, AVFrame frame, List<BufferedImage> out) {
@@ -253,50 +255,60 @@ public class H264Decoder implements VideoDecoder {
     private AVFrame bgrFrame;
     private BytePointer bgrBuffer;
     private int bgrBufferSize;
+    private int lastOutW = -1;
+    private int lastOutH = -1;
 
-    /** AVFrame (YUV) -> BGR24 -> BufferedImage，必要时缩放到 width x height。 */
+    /**
+     * Converts an AVFrame (YUV) to BGR24 -> BufferedImage.
+     * If the width/height given to the constructor is > 0, scales to that fixed
+     * size; if 0 (UDP mode), outputs at the stream's native resolution.
+     */
     private BufferedImage frameToImage(AVFrame frame) {
         int srcW = frame.width();
         int srcH = frame.height();
         if (srcW <= 0 || srcH <= 0) {
             return null;
         }
+        int outW = (width > 0) ? width : srcW;
+        int outH = (height > 0) ? height : srcH;
 
         swsCtx = sws_getCachedContext(swsCtx,
                 srcW, srcH, codecCtx.pix_fmt(),
-                width, height, AV_PIX_FMT_BGR24,
+                outW, outH, AV_PIX_FMT_BGR24,
                 SWS_BILINEAR, null, null, (double[]) null);
         if (swsCtx == null) {
             return null;
         }
 
-        // 复用 bgrFrame + bgrBuffer，避免每帧分配/释放 native 内存
+        // Reuse bgrFrame + bgrBuffer to avoid allocating/freeing native memory per frame
         if (bgrFrame == null) {
             bgrFrame = av_frame_alloc();
         }
         AVFrame bgr = bgrFrame;
 
-        int needed = av_image_get_buffer_size(AV_PIX_FMT_BGR24, width, height, 1);
-        if (bgrBuffer == null || bgrBufferSize < needed) {
+        int needed = av_image_get_buffer_size(AV_PIX_FMT_BGR24, outW, outH, 1);
+        if (bgrBuffer == null || bgrBufferSize < needed || outW != lastOutW || outH != lastOutH) {
             if (bgrBuffer != null) {
                 bgrBuffer.deallocate();
             }
-            bgrBuffer = new BytePointer(needed);  // JavaCV 内部调用 av_malloc，由 BytePointer deallocator 管理
+            bgrBuffer = new BytePointer(needed);  // JavaCV internally calls av_malloc, managed by the BytePointer deallocator
             bgrBufferSize = needed;
+            lastOutW = outW;
+            lastOutH = outH;
             av_image_fill_arrays(bgr.data(), bgr.linesize(), bgrBuffer,
-                    AV_PIX_FMT_BGR24, width, height, 1);
+                    AV_PIX_FMT_BGR24, outW, outH, 1);
         }
 
         sws_scale(swsCtx, frame.data(), frame.linesize(), 0, srcH,
                 bgr.data(), bgr.linesize());
 
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_3BYTE_BGR);
-        byte[] row = new byte[width * 3];
+        BufferedImage image = new BufferedImage(outW, outH, BufferedImage.TYPE_3BYTE_BGR);
+        byte[] row = new byte[outW * 3];
         BytePointer plane = bgr.data(0);
         int linesize = bgr.linesize(0);
-        for (int y = 0; y < height; y++) {
+        for (int y = 0; y < outH; y++) {
             plane.position((long) y * linesize).get(row);
-            image.getRaster().setDataElements(0, y, width, 1, row);
+            image.getRaster().setDataElements(0, y, outW, 1, row);
         }
         return image;
     }
@@ -325,15 +337,15 @@ public class H264Decoder implements VideoDecoder {
         }
         bgrBufferSize = 0;
         if (codecCtx != null) {
-            // 清除 extradata 指针，防止 avcodec_free_context 内部 av_freep 与
-            // JavaCV BytePointer deallocator 产生 double-free
+            // Clear the extradata pointer to prevent a double-free between the internal
+            // av_freep of avcodec_free_context and the JavaCV BytePointer deallocator
             codecCtx.extradata((BytePointer) null);
             codecCtx.extradata_size(0);
             avcodec_free_context(codecCtx);
             codecCtx = null;
         }
-        // extradata 内存由 avcodec_free_context 的 av_freep 释放，
-        // 释放 extradataPtr 引用以便 JavaCV deallocator 可安全处理
+        // extradata memory is freed by av_freep inside avcodec_free_context;
+        // drop the extradataPtr reference so the JavaCV deallocator can handle it safely
         extradataPtr = null;
     }
 

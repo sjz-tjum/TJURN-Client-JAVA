@@ -5,7 +5,7 @@ import com.mqttclient.protobuf.gen.RobotStaticStatusProto.RobotStaticStatus;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 /**
- * 解析机器人静态状态（RobotStaticStatus）和动态状态（RobotDynamicStatus）。
+ * Parses robot static status (RobotStaticStatus) and dynamic status (RobotDynamicStatus).
  */
 public final class RobotStatusParser {
 

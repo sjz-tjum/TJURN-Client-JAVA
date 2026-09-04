@@ -18,10 +18,11 @@ import static org.bytedeco.ffmpeg.global.swscale.*;
 import static org.bytedeco.ffmpeg.presets.avutil.AVERROR_EAGAIN;
 
 /**
- * 基于 JavaCV / FFmpeg 的 HEVC (H.265) 解码器。
+ * JavaCV / FFmpeg-based HEVC (H.265) decoder.
  *
- * <p>与 {@link H264Decoder} 架构一致，使用 {@code AV_CODEC_ID_HEVC}。
- * Annex-B 流输入，自动从流内 VPS/SPS/PPS 自举，输出 BGR24 → BufferedImage。
+ * <p>Architecture mirrors {@link H264Decoder}, using {@code AV_CODEC_ID_HEVC}.
+ * Accepts an Annex-B stream, bootstraps automatically from in-band VPS/SPS/PPS,
+ * and outputs BGR24 → BufferedImage.
  */
 public class HevcDecoder implements VideoDecoder {
 
@@ -35,7 +36,7 @@ public class HevcDecoder implements VideoDecoder {
     private byte[] cachedExtradata;
     private long frameCount;
 
-    // extradata 指针（防 GC 回收导致悬空指针）
+    // extradata pointer (prevents a dangling pointer after GC)
     private BytePointer extradataPtr;
 
     public HevcDecoder(int width, int height) {
@@ -189,10 +190,11 @@ public class HevcDecoder implements VideoDecoder {
     private int lastOutH = -1;
 
     /**
-     * 把解码帧转成 BGR24 BufferedImage。
+     * Converts a decoded frame to a BGR24 BufferedImage.
      *
-     * <p>输出尺寸规则：构造时传入的 width/height 若 &gt; 0 则缩放为该固定尺寸；
-     * 若为 0（UDP 模式，不受限）则按流本身分辨率输出，分辨率变化时自动重建缓冲。
+     * <p>Output size rules: if the width/height passed to the constructor is
+     * &gt; 0, scales to that fixed size; if 0 (unrestricted UDP mode), outputs at
+     * the stream's own resolution and rebuilds the buffer when it changes.
      */
     private BufferedImage frameToImage(AVFrame frame) {
         int srcW = frame.width();

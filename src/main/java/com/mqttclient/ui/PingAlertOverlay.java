@@ -13,28 +13,30 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 
 /**
- * 标点提醒叠加层 —— 科幻 HUD 风格。收到标点时屏幕顶部弹出：
+ * Ping alert overlay -- sci-fi HUD style. When a ping arrives, a banner pops in at the
+ * top of the screen featuring:
  * <ul>
- *   <li>深色**斜切角**面板 + **霓虹青发光边框** + 边框刻度点</li>
- *   <li>霓虹警告三角图标 + 发光文字「注意！」</li>
- *   <li>一条**扫描线**在面板内自上而下扫过</li>
- *   <li>约 3 秒后淡出自动隐藏</li>
+ *   <li>A dark **chamfered-corner** panel with a **neon cyan glowing border** and tick marks</li>
+ *   <li>A neon warning-triangle icon + glowing "Attention!" text</li>
+ *   <li>A **scan line** sweeping top-to-bottom across the panel</li>
+ *   <li>Auto-fades out after about 3 seconds</li>
  * </ul>
  *
- * <p>铺满整窗但 {@link #contains(int, int)} 恒为 false，不拦截鼠标事件，点击可穿透。
+ * <p>Fills the whole window, but {@link #contains(int, int)} always returns false so it never
+ * intercepts mouse events; clicks pass through to the layers below.
  */
 public class PingAlertOverlay extends JPanel {
 
-    private static final Color PANEL_BG    = new Color(6, 18, 30, 228);  // 深蓝黑半透明
-    private static final Color NEON        = new Color(0x00e5ff);        // 霓虹青
+    private static final Color PANEL_BG    = new Color(6, 18, 30, 228);  // Dark translucent blue-black
+    private static final Color NEON        = new Color(0x00e5ff);        // Neon cyan
     private static final Color NEON_BLUE   = new Color(0x0088ff);
-    private static final Color WARN_TRIANGLE = new Color(0xff3b30);      // 警示三角（红）
-    private static final Color WARN_GLOW     = new Color(0xff6b60);      // 警示三角外圈辉光（亮红）
+    private static final Color WARN_TRIANGLE = new Color(0xff3b30);      // Warning triangle (red)
+    private static final Color WARN_GLOW     = new Color(0xff6b60);      // Warning triangle outer glow (bright red)
     private static final Color TEXT_MAIN   = new Color(0xecfeff);
 
     private static final long DURATION_MS = 3000;
     private static final int BANNER_H = 56;
-    private static final int CORNER = 20;   // 斜切角大小
+    private static final int CORNER = 20;   // Chamfer size
 
     private volatile boolean visible = false;
     private long startMs;
@@ -44,7 +46,7 @@ public class PingAlertOverlay extends JPanel {
         setOpaque(false);
     }
 
-    /** 触发一次"注意！"提醒。线程安全（自动切到 EDT）。 */
+    /** Triggers a one-time "Attention!" alert. Thread-safe (auto-switches to the EDT). */
     public void showAlert(String sender, double x, double y) {
         if (!SwingUtilities.isEventDispatchThread()) {
             SwingUtilities.invokeLater(() -> showAlert(sender, x, y));
@@ -71,7 +73,7 @@ public class PingAlertOverlay extends JPanel {
         timer.start();
     }
 
-    /** 不拦截鼠标事件，点击穿透到下层。 */
+    /** Does not intercept mouse events; clicks pass through to the layers below. */
     @Override
     public boolean contains(int x, int y) {
         return false;
@@ -93,7 +95,7 @@ public class PingAlertOverlay extends JPanel {
         if (t > 1) {
             t = 1;
         }
-        // 透明度：淡入(前10%) → 常亮 → 淡出(后30%)
+        // Alpha: fade in (first 10%) -> steady -> fade out (last 30%)
         double alpha;
         if (t < 0.1) {
             alpha = t / 0.1;
@@ -114,13 +116,13 @@ public class PingAlertOverlay extends JPanel {
         int by = 36;
         int bh = BANNER_H;
 
-        // ── 斜切角面板 ──
+        // ---- Chamfered panel ----
         Path2D panel = angledRect(bx, by, bw, bh, CORNER);
         g2.setColor(new Color(PANEL_BG.getRed(), PANEL_BG.getGreen(), PANEL_BG.getBlue(),
                 (int) (PANEL_BG.getAlpha() * alpha)));
         g2.fill(panel);
 
-        // ── 发光边框（外圈宽辉光 + 内圈亮线）──
+        // ---- Glowing border (wide outer glow + bright inner line) ----
         g2.setColor(new Color(NEON_BLUE.getRed(), NEON_BLUE.getGreen(), NEON_BLUE.getBlue(),
                 (int) (alpha * 60)));
         g2.setStroke(new BasicStroke(6f));
@@ -130,17 +132,17 @@ public class PingAlertOverlay extends JPanel {
         g2.setStroke(new BasicStroke(2f));
         g2.draw(panel);
 
-        // ── 边框刻度点（左右两侧各两个，科技感）──
+        // ---- Border tick marks (two per side, for a tech look) ----
         g2.setColor(new Color(NEON.getRed(), NEON.getGreen(), NEON.getBlue(),
                 (int) (alpha * 200)));
         g2.setStroke(new BasicStroke(2f));
         for (int i = 1; i <= 2; i++) {
             int yPos = by + bh * i / 3;
-            g2.drawLine(bx, yPos, bx + 5, yPos);                 // 左
-            g2.drawLine(bx + bw - 5, yPos, bx + bw, yPos);       // 右
+            g2.drawLine(bx, yPos, bx + 5, yPos);                 // left
+            g2.drawLine(bx + bw - 5, yPos, bx + bw, yPos);       // right
         }
 
-        // ── 扫描线（自上而下扫过）──
+        // ---- Scan line (sweeps top to bottom) ----
         double scan = ((now - startMs) % 1200) / 1200.0;
         int scanY = by + (int) (scan * bh);
         g2.setColor(new Color(NEON.getRed(), NEON.getGreen(), NEON.getBlue(),
@@ -150,7 +152,7 @@ public class PingAlertOverlay extends JPanel {
                 (int) (alpha * 35)));
         g2.fillRect(bx + 2, scanY + 3, bw - 4, 5);
 
-        // ── 警告三角图标（霓虹青）──
+        // ---- Warning triangle icon ----
         int iconSize = 28;
         int gap = 14;
         String text = "注意！";
@@ -168,7 +170,7 @@ public class PingAlertOverlay extends JPanel {
         tri.lineTo(iconX, iconY + iconSize);
         tri.lineTo(iconX + iconSize, iconY + iconSize);
         tri.closePath();
-        // 霓虹辉光：外圈宽光晕 + 半透明填充 + 亮红描边
+        // Neon glow: wide outer halo + semi-transparent fill + bright red stroke
         g2.setStroke(new BasicStroke(8f));
         g2.setColor(new Color(WARN_GLOW.getRed(), WARN_GLOW.getGreen(), WARN_GLOW.getBlue(),
                 (int) (alpha * 70)));
@@ -180,14 +182,14 @@ public class PingAlertOverlay extends JPanel {
         g2.setColor(new Color(WARN_TRIANGLE.getRed(), WARN_TRIANGLE.getGreen(),
                 WARN_TRIANGLE.getBlue(), (int) (alpha * 255)));
         g2.draw(tri);
-        // 感叹号
+        // Exclamation mark
         g2.setColor(Color.WHITE);
         g2.setStroke(new BasicStroke(3f));
         int exX = iconX + iconSize / 2;
         g2.drawLine(exX, iconY + 5, exX, iconY + iconSize - 10);
         g2.fill(new Ellipse2D.Double(exX - 2, iconY + iconSize - 6, 4, 4));
 
-        // ── 发光文字「注意！」──
+        // ---- Glowing "Attention!" text ----
         for (int i = 3; i >= 1; i--) {
             g2.setColor(new Color(NEON.getRed(), NEON.getGreen(), NEON.getBlue(),
                     (int) (alpha * (150 - i * 38))));
@@ -202,7 +204,7 @@ public class PingAlertOverlay extends JPanel {
         g2.dispose();
     }
 
-    /** 斜切角矩形路径（科幻面板）。 */
+    /** Chamfered-rectangle path (sci-fi panel). */
     private static Path2D angledRect(int x, int y, int w, int h, int c) {
         Path2D p = new Path2D.Double();
         p.moveTo(x, y + c);

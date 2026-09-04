@@ -7,10 +7,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
- * UDP HEVC 分片帧重组器。
+ * Reassembles UDP HEVC frames from fragments.
  *
- * <p>按 {@code frame_id} 缓存分片，当收集字节数达到 {@code total_bytes} 时
- * 按 {@code frag_id} 顺序拼接输出完整帧。线程安全，可被多个线程调用。
+ * <p>Caches fragments by {@code frame_id}; when the collected byte count reaches
+ * {@code total_bytes}, concatenates them in {@code frag_id} order to emit the complete
+ * frame. Thread-safe and callable from multiple threads.
  */
 public class UdpFrameReassembler {
 
@@ -19,8 +20,8 @@ public class UdpFrameReassembler {
     private final Consumer<String> warn;
 
     /**
-     * @param timeoutMs 帧超时时间（超过则丢弃）
-     * @param warn      丢弃超时帧时的告警回调
+     * @param timeoutMs frame timeout (dropped when exceeded)
+     * @param warn      warning callback invoked when a timed-out frame is dropped
      */
     public UdpFrameReassembler(long timeoutMs, Consumer<String> warn) {
         this.timeoutMs = timeoutMs;
@@ -28,18 +29,19 @@ public class UdpFrameReassembler {
     }
 
     /**
-     * 添加一个分片。
+     * Adds a fragment.
      *
-     * @return 若该帧已收齐则返回按序拼接的完整帧字节（并移除缓存），否则返回 null
+     * @return the reassembled frame bytes (removing the frame from the cache) if the
+     *         frame is now complete, otherwise {@code null}
      */
     public byte[] addFragment(int frameId, int fragId, byte[] data, int totalBytes) {
         PendingFrame pf = pendingFrames.computeIfAbsent(frameId, k -> new PendingFrame(totalBytes));
         pf.lastUpdate = System.currentTimeMillis();
-        // 以后到的非零 totalBytes 为准
+        // A later non-zero totalBytes takes precedence
         if (totalBytes > 0 && pf.totalBytes == 0) {
             pf.totalBytes = totalBytes;
         }
-        // 同一分片去重
+        // Deduplicate identical fragments
         pf.fragments.putIfAbsent(fragId, data);
 
         if (pf.isComplete()) {
@@ -50,9 +52,9 @@ public class UdpFrameReassembler {
     }
 
     /**
-     * 清理超时未收齐的帧。
+     * Cleans up frames not completed within the timeout.
      *
-     * @return 丢弃的帧数
+     * @return the number of dropped frames
      */
     public int cleanupStale(long now) {
         int removed = 0;
@@ -72,7 +74,7 @@ public class UdpFrameReassembler {
         return removed;
     }
 
-    /** 当前未完成帧数。 */
+    /** Number of currently incomplete frames. */
     public int pendingCount() {
         return pendingFrames.size();
     }
@@ -81,7 +83,7 @@ public class UdpFrameReassembler {
         pendingFrames.clear();
     }
 
-    /** 正在重组中的帧。 */
+    /** A frame currently being reassembled. */
     private static class PendingFrame {
         final TreeMap<Integer, byte[]> fragments = new TreeMap<>();
         int totalBytes;

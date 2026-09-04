@@ -8,22 +8,22 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 /*
- * 视频包解析工具。
+ * Video packet parsing utilities.
  */
 public final class VideoPacketParser {
 
     private VideoPacketParser() {
     }
 
-    /** 解析后的视频包结构，对应 struct.unpack 的三元组。 */
+    /** A parsed video packet, mirroring the struct.unpack tuple. */
     public record VideoPacket(int seqId, long timestamp, byte[] h264Chunk) {
     }
 
     /**
-     * protobuf 反序列化，返回内部 data。
+     * Deserializes the protobuf message and returns its inner data.
      *
-     * @param mqttPayload MQTT 原始载荷
-     * @return 真正的视频包数据（应为 300 字节）
+     * @param mqttPayload raw MQTT payload
+     * @return the actual video packet data (expected to be 300 bytes)
      */
     public static byte[] parseVideoPayload(byte[] mqttPayload) throws InvalidProtocolBufferException {
         CustomByteBlock block = CustomByteBlock.parseFrom(mqttPayload);
@@ -31,18 +31,18 @@ public final class VideoPacketParser {
     }
 
     /**
-     * 解出 VideoStreamData 结构体。
-     * 对应 {@code struct.unpack('<Hq290s', raw_data)}。
+     * Decodes the VideoStreamData struct.
+     * Mirrors {@code struct.unpack('<Hq290s', raw_data)}.
      *
-     * @param rawData 300 字节的视频包数据
-     * @return 解析结果；长度不符时返回 null
+     * @param rawData the 300-byte video packet data
+     * @return the parsed result, or null if the length does not match
      */
     public static VideoPacket unpack(byte[] rawData) {
         if (rawData == null || rawData.length != Constants.VIDEO_DATA_SIZE) {
             return null;
         }
         ByteBuffer buf = ByteBuffer.wrap(rawData).order(ByteOrder.LITTLE_ENDIAN);
-        // uint16：读 short 后与 0xFFFF 求与，得到无符号值
+        // uint16: read as short and mask with 0xFFFF to obtain the unsigned value
         int seqId = buf.getShort() & 0xFFFF;
         long timestamp = buf.getLong();
         byte[] h264Chunk = new byte[Constants.H264_CHUNK_SIZE];
@@ -51,9 +51,9 @@ public final class VideoPacketParser {
     }
 
     /**
-     * 从 MQTT 原始载荷解析出结构体。
+     * Parses the struct from a raw MQTT payload.
      *
-     * @return 解析结果，失败或长度异常返回 null
+     * @return the parsed result, or null on failure or unexpected length
      */
     public static VideoPacket parse(byte[] mqttPayload) throws InvalidProtocolBufferException {
         return unpack(parseVideoPayload(mqttPayload));

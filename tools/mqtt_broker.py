@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-简易 MQTT 3.1.1 Broker — 用于测试视频流收发。
+A lightweight MQTT 3.1.1 broker for testing video streaming.
 
-纯 Python + asyncio 实现，无需外部依赖。支持:
+Implemented in pure Python with asyncio; no external dependencies. Supports:
   - CONNECT / CONNACK
-  - PUBLISH (QoS 0/1/2) + 消息路由
-  - SUBSCRIBE / SUBACK（含 + 和 # 通配符匹配）
+  - PUBLISH (QoS 0/1/2) + message routing
+  - SUBSCRIBE / SUBACK (including '+' and '#' wildcard matching)
   - UNSUBSCRIBE / UNSUBACK
   - PINGREQ / PINGRESP
   - DISCONNECT
-  - 遗嘱消息 (Will Message)
-  - 保留消息 (Retained Message)
-  - Clean Session
+  - Will messages
+  - Retained messages
+  - Clean session
 
-用法:
-    python mqtt_broker.py                          # 默认 0.0.0.0:1883
-    python mqtt_broker.py --port 3333              # 自定义端口
+Usage:
+    python mqtt_broker.py                          # default 0.0.0.0:1883
+    python mqtt_broker.py --port 3333              # custom port
     python mqtt_broker.py --host 0.0.0.0 --port 1883 --verbose
 
-然后客户端连接这个 broker 即可，例如 Java 端把 Constants 里的
-DEFAULT_BROKER_HOST 改为 127.0.0.1 / 本机 IP。
+Clients then connect to this broker; for example, the Java client can point
+DEFAULT_BROKER_HOST in Constants to 127.0.0.1 / this machine's IP.
 """
 
 import argparse
@@ -30,13 +30,13 @@ import struct
 import time
 from collections import defaultdict
 
-# ── 日志 ──────────────────────────────────────────────────────────────────
+# ── Logging ─────────────────────────────────────────────────────────────
 
 logger = logging.getLogger("mqtt-broker")
 
-# ── MQTT 3.1.1 协议常量 ──────────────────────────────────────────────────
+# ── MQTT 3.1.1 protocol constants ──────────────────────────────────────
 
-# 控制包类型 (packet_type << 4 | flags)
+# Control packet type (packet_type << 4 | flags)
 CONNECT = 1
 CONNACK = 2
 PUBLISH = 3
@@ -52,7 +52,7 @@ PINGREQ = 12
 PINGRESP = 13
 DISCONNECT = 14
 
-# CONNACK 返回码
+# CONNACK return codes
 CONNACK_ACCEPTED = 0
 CONNACK_REFUSED_PROTOCOL = 1
 CONNACK_REFUSED_ID = 2
@@ -60,21 +60,21 @@ CONNACK_REFUSED_SERVER = 3
 CONNACK_REFUSED_BAD_USER_PASS = 4
 CONNACK_REFUSED_NOT_AUTHORIZED = 5
 
-# SUBACK 返回码
+# SUBACK return codes
 SUBACK_QOS0 = 0x00
 SUBACK_QOS1 = 0x01
 SUBACK_QOS2 = 0x02
 SUBACK_FAILURE = 0x80
 
 
-# ── MQTT 编解码 ──────────────────────────────────────────────────────────
+# ── MQTT codec ─────────────────────────────────────────────────────────
 
 class MQTTPacketError(Exception):
     pass
 
 
 def encode_remaining_length(length: int) -> bytes:
-    """变长编码 remaining length (MQTT §2.2.3)。"""
+    """Variable-length encode of the remaining length (MQTT §2.2.3)."""
     if length > 268_435_455:
         raise MQTTPacketError("remaining length too large")
     data = bytearray()
@@ -90,7 +90,7 @@ def encode_remaining_length(length: int) -> bytes:
 
 
 def decode_remaining_length(data: bytes, offset: int) -> tuple[int, int]:
-    """变长解码 remaining length，返回 (length, bytes_consumed)。"""
+    """Variable-length decode of the remaining length; returns (length, bytes_consumed)."""
     multiplier = 1
     value = 0
     consumed = 0
@@ -109,7 +109,7 @@ def decode_remaining_length(data: bytes, offset: int) -> tuple[int, int]:
 
 
 def encode_utf8(s: str) -> bytes:
-    """MQTT UTF-8 编码：2 字节长度前缀 + UTF-8 数据。"""
+    """MQTT UTF-8 encoding: 2-byte length prefix + UTF-8 data."""
     data = s.encode("utf-8")
     if len(data) > 65535:
         raise MQTTPacketError("string too long")
@@ -117,7 +117,7 @@ def encode_utf8(s: str) -> bytes:
 
 
 def decode_utf8(data: bytes, offset: int) -> tuple[str, int]:
-    """MQTT UTF-8 解码，返回 (string, new_offset)。"""
+    """MQTT UTF-8 decoding; returns (string, new_offset)."""
     if offset + 2 > len(data):
         raise MQTTPacketError("string length field truncated")
     length = struct.unpack("!H", data[offset:offset + 2])[0]
@@ -129,11 +129,11 @@ def decode_utf8(data: bytes, offset: int) -> tuple[str, int]:
 
 
 def make_fixed_header(packet_type: int, flags: int, remaining_length: int) -> bytes:
-    """构造固定头。"""
+    """Build a fixed header."""
     return bytes([(packet_type << 4) | flags]) + encode_remaining_length(remaining_length)
 
 
-# ── 数据包构造 ──────────────────────────────────────────────────────────
+# ── Packet construction ────────────────────────────────────────────────
 
 def make_connack(session_present: bool = False, return_code: int = CONNACK_ACCEPTED) -> bytes:
     variable = bytes([1 if session_present else 0, return_code])
@@ -174,26 +174,26 @@ def make_pingresp() -> bytes:
     return make_fixed_header(PINGRESP, 0, 0)
 
 
-# ── 主题匹配 ─────────────────────────────────────────────────────────────
+# ── Topic matching ─────────────────────────────────────────────────────
 
 def topic_matches(subscription: str, topic: str) -> bool:
     """
-    MQTT 3.1.1 §4.7 主题过滤匹配。
-    支持单层通配符 '+' 和多层通配符 '#'。
+    MQTT 3.1.1 §4.7 topic filter matching.
+    Supports the single-level wildcard '+' and the multi-level wildcard '#'.
     """
     sub_parts = subscription.split("/")
     topic_parts = topic.split("/")
 
     for i, sub_part in enumerate(sub_parts):
         if sub_part == "#":
-            # '#' 匹配所有剩余层级，且必须是最后一个
+            # '#' matches all remaining levels and must be the last segment
             return i == len(sub_parts) - 1
         if sub_part == "+":
-            # '+' 匹配恰好一层（不能为空）
+            # '+' matches exactly one level (may not be empty)
             if i >= len(topic_parts):
                 return False
             if topic_parts[i] == "":
-                # 但有些 broker 允许 + 匹配空… 遵循严格规范
+                # Some brokers allow '+' to match empty levels... keep strict behavior
                 pass
             continue
         if i >= len(topic_parts):
@@ -201,14 +201,14 @@ def topic_matches(subscription: str, topic: str) -> bool:
         if sub_part != topic_parts[i]:
             return False
 
-    # 所有订阅层级都消费完时，主题也必须刚好消费完
+    # If every subscription level has been consumed, the topic must be too
     return len(sub_parts) == len(topic_parts)
 
 
-# ── 会话 / 客户端 ────────────────────────────────────────────────────────
+# ── Sessions / clients ─────────────────────────────────────────────────
 
 class ClientSession:
-    """单个 MQTT 客户端会话。"""
+    """A single MQTT client session."""
 
     def __init__(self, client_id: str, reader: asyncio.StreamReader,
                  writer: asyncio.StreamWriter, clean_session: bool = True,
@@ -224,9 +224,9 @@ class ClientSession:
         self.will_message: bytes | None = None
         self.will_qos: int = 0
         self.will_retain: bool = False
-        # QoS 1/2 未完成事务
+        # In-flight QoS 1/2 transactions
         self.pending_out: dict[int, asyncio.Task] = {}   # packet_id -> resend task
-        self.pending_in: dict[int, bytes] = {}            # packet_id -> payload (QoS 2 阶段一)
+        self.pending_in: dict[int, bytes] = {}            # packet_id -> payload (QoS 2, phase one)
 
     @property
     def addr(self):
@@ -236,25 +236,25 @@ class ClientSession:
             return ("?", 0)
 
 
-# ── Broker 核心 ──────────────────────────────────────────────────────────
+# ── Broker core ────────────────────────────────────────────────────────
 
 class MQTTBroker:
-    """简易 MQTT 3.1.1 Broker。"""
+    """A simple MQTT 3.1.1 broker."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 1883, verbose: bool = False):
         self.host = host
         self.port = port
         self.verbose = verbose
 
-        # topic -> list[ClientSession]  (非通配符精确订阅)
+        # topic -> list[ClientSession]  (non-wildcard exact subscriptions)
         self._subscriptions: dict[str, list[ClientSession]] = defaultdict(list)
         # client_id -> ClientSession
         self._sessions: dict[str, ClientSession] = {}
-        # 保留消息: topic -> (payload, qos)
+        # Retained messages: topic -> (payload, qos)
         self._retained: dict[str, tuple[bytes, int]] = {}
-        # 下一个 packet_id (服务端发布时用)
+        # Next packet_id (used for server-side publishes)
         self._next_packet_id = 1
-        # 全局统计
+        # Global statistics
         self._total_published = 0
         self._total_bytes = 0
         self._start_time: float | None = None
@@ -262,11 +262,11 @@ class MQTTBroker:
 
         self._server: asyncio.Server | None = None
 
-    # ── 订阅管理 ──────────────────────────────────────────────────────
+    # ── Subscription management ───────────────────────────────────────
 
     def subscribe(self, client: ClientSession, topic_filter: str, qos: int):
-        """添加订阅。"""
-        # 实际授予的 QoS 取 min(请求 QoS, 2)
+        """Add a subscription."""
+        # The granted QoS is min(requested QoS, 2)
         granted_qos = min(qos, 2)
         self._subscriptions[topic_filter].append(client)
         if self.verbose:
@@ -274,7 +274,7 @@ class MQTTBroker:
         return granted_qos
 
     def unsubscribe(self, client: ClientSession, topic_filter: str):
-        """移除订阅。"""
+        """Remove a subscription."""
         subs = self._subscriptions.get(topic_filter, [])
         if client in subs:
             subs.remove(client)
@@ -284,8 +284,8 @@ class MQTTBroker:
             logger.info("[取消] client=%s topic=%s", client.client_id, topic_filter)
 
     def find_subscribers(self, topic: str) -> list[tuple[ClientSession, int]]:
-        """找到所有匹配 topic 的订阅者，返回 [(session, qos), ...]。
-        去重：同一客户端多次匹配时选最高 QoS。
+        """Find every subscriber matching the topic; returns [(session, qos), ...].
+        Deduplicated: when the same client matches multiple times, the highest QoS wins.
         """
         result: dict[str, tuple[ClientSession, int]] = {}
         for sub_filter, clients in self._subscriptions.items():
@@ -296,7 +296,7 @@ class MQTTBroker:
         return list(result.values())
 
     def remove_session(self, client: ClientSession):
-        """移除客户端的所有订阅和会话。"""
+        """Remove all of a client's subscriptions and its session."""
         for topic_filter in list(self._subscriptions.keys()):
             subs = self._subscriptions[topic_filter]
             if client in subs:
@@ -306,23 +306,23 @@ class MQTTBroker:
         if client.client_id in self._sessions:
             del self._sessions[client.client_id]
 
-    # ── 消息发布 ──────────────────────────────────────────────────────
+    # ── Publishing ────────────────────────────────────────────────────
 
     def publish(self, topic: str, payload: bytes, qos: int = 0,
                 retain: bool = False, sender: ClientSession | None = None):
-        """发布消息：路由到所有匹配订阅者 + 处理保留。"""
-        # 保留消息
+        """Publish a message: route it to all matching subscribers and handle retention."""
+        # Retained messages
         if retain:
             if len(payload) > 0:
                 self._retained[topic] = (payload, qos)
             else:
                 self._retained.pop(topic, None)
 
-        # 路由给订阅者
+        # Route to subscribers
         subs = self.find_subscribers(topic)
         for client, sub_qos in subs:
             if sender and client.client_id == sender.client_id:
-                continue  # 不发给发送者自己
+                continue  # do not echo back to the sender
             effective_qos = min(qos, sub_qos)
             self._send_to_client(client, topic, payload, effective_qos, retain=False)
 
@@ -331,7 +331,7 @@ class MQTTBroker:
 
     def _send_to_client(self, client: ClientSession, topic: str, payload: bytes,
                         qos: int, retain: bool):
-        """向单个客户端推送 PUBLISH 包。"""
+        """Push a PUBLISH packet to a single client."""
         try:
             packet = self._build_publish(topic, payload, qos, retain)
             client.writer.write(packet)
@@ -339,15 +339,15 @@ class MQTTBroker:
             logger.warning("发送失败 client=%s: %s", client.client_id, e)
 
     def _build_publish(self, topic: str, payload: bytes, qos: int, retain: bool) -> bytes:
-        """构造 PUBLISH 包。"""
+        """Build a PUBLISH packet."""
         flags = 0
         if retain:
             flags |= 0x01
         flags |= (qos & 0x03) << 1
 
-        # 可变头: topic name
+        # Variable header: topic name
         variable = encode_utf8(topic)
-        # QoS > 0 时需要 packet_id
+        # A packet_id is required when QoS > 0
         packet_id = 0
         if qos > 0:
             packet_id = self._next_packet_id
@@ -364,15 +364,15 @@ class MQTTBroker:
         return packet
 
     def _send_retained(self, client: ClientSession, topic_filter: str):
-        """发送匹配 topic_filter 的保留消息给新订阅者。"""
+        """Send retained messages matching topic_filter to a new subscriber."""
         for topic, (payload, qos) in self._retained.items():
             if topic_matches(topic_filter, topic):
                 self._send_to_client(client, topic, payload, qos, retain=True)
 
-    # ── 遗嘱消息 ──────────────────────────────────────────────────────
+    # ── Will messages ─────────────────────────────────────────────────
 
     def _publish_will(self, client: ClientSession):
-        """客户端异常断开时发布遗嘱消息。"""
+        """Publish the will message when a client disconnects unexpectedly."""
         if client.will_topic is None:
             return
         if self.verbose:
@@ -380,16 +380,16 @@ class MQTTBroker:
         self.publish(client.will_topic, client.will_message,
                      qos=client.will_qos, retain=client.will_retain)
 
-    # ── 客户端处理 ──────────────────────────────────────────────────────
+    # ── Client handling ────────────────────────────────────────────────
 
     async def handle_client(self, reader: asyncio.StreamReader,
                             writer: asyncio.StreamWriter):
-        """处理单个客户端连接的主循环。"""
+        """Main loop for handling a single client connection."""
         addr = writer.get_extra_info("peername")
         client: ClientSession | None = None
 
         try:
-            # 第一步必须是 CONNECT
+            # The first packet must be CONNECT
             packet_type, flags, payload = await self._read_packet(reader)
             if packet_type != CONNECT:
                 logger.warning("[%s:%d] 首包非 CONNECT (type=%d), 断开",
@@ -399,13 +399,13 @@ class MQTTBroker:
 
             client = await self._handle_connect(reader, writer, payload)
             if client is None:
-                return  # _handle_connect 内部已发送 CONNACK 拒绝
+                return  # _handle_connect already sent a CONNACK rejection
 
             if self.verbose:
                 logger.info("[连接] client=%s addr=%s:%d keepalive=%ds",
                             client.client_id, addr[0], addr[1], client.keep_alive)
 
-            # 主循环：处理后续包
+            # Main loop: process subsequent packets
             keep_alive_timeout = max(client.keep_alive * 1.5, 10)
             while True:
                 try:
@@ -420,7 +420,7 @@ class MQTTBroker:
                 await self._dispatch(client, packet_type, flags, payload)
 
         except asyncio.IncompleteReadError:
-            # 客户端正常断开
+            # Client disconnected cleanly
             pass
         except ConnectionResetError:
             pass
@@ -434,8 +434,8 @@ class MQTTBroker:
             if client:
                 if self.verbose:
                     logger.info("[断开] client=%s", client.client_id)
-                # 非正常断开时发送遗嘱
-                # (简化处理：总是检查遗嘱)
+                # Send the will message on abnormal disconnects
+                # (simplified: always check for a will)
                 self._publish_will(client)
                 self.remove_session(client)
                 self._clients_connected -= 1
@@ -445,16 +445,16 @@ class MQTTBroker:
                 pass
 
     async def _read_packet(self, reader: asyncio.StreamReader) -> tuple[int, int, bytes]:
-        """读取一个 MQTT 包，返回 (packet_type, flags, payload)。
-        payload 是控制包类型对应的可变头 + 有效载荷的剩余部分。
+        """Read one MQTT packet; returns (packet_type, flags, payload).
+        payload is the variable header + payload remainder for the given control packet type.
         """
-        # 固定头首字节
+        # Fixed header first byte
         first = await reader.readexactly(1)
         byte0 = first[0]
         packet_type = (byte0 >> 4) & 0x0F
         flags = byte0 & 0x0F
 
-        # remaining length
+        # Remaining length
         remaining = 0
         multiplier = 1
         while True:
@@ -467,7 +467,7 @@ class MQTTBroker:
             if (byte & 0x80) == 0:
                 break
 
-        # 读取剩余部分
+        # Read the remaining bytes
         payload = b""
         if remaining > 0:
             payload = await reader.readexactly(remaining)
@@ -477,23 +477,23 @@ class MQTTBroker:
     async def _handle_connect(self, reader: asyncio.StreamReader,
                         writer: asyncio.StreamWriter,
                         payload: bytes) -> ClientSession | None:
-        """处理 CONNECT 包。成功返回 ClientSession，失败返回 None 并发送 CONNACK 拒绝。"""
+        """Handle a CONNECT packet. Returns a ClientSession on success, or None after sending a CONNACK rejection."""
         offset = 0
 
-        # 协议名
+        # Protocol name
         proto_name, offset = decode_utf8(payload, offset)
         if proto_name not in ("MQTT", "MQIsdp"):
             writer.write(make_connack(return_code=CONNACK_REFUSED_PROTOCOL))
             writer.close()
             return None
 
-        # 协议级别 (MQTT 3.1.1 = 4)
+        # Protocol level (MQTT 3.1.1 = 4)
         if offset >= len(payload):
             raise MQTTPacketError("CONNECT truncated at protocol level")
         protocol_level = payload[offset]
         offset += 1
 
-        # 连接标志
+        # Connect flags
         if offset >= len(payload):
             raise MQTTPacketError("CONNECT truncated at connect flags")
         connect_flags = payload[offset]
@@ -515,7 +515,7 @@ class MQTTBroker:
         # Client ID
         client_id, offset = decode_utf8(payload, offset)
         if not client_id:
-            # 空 client_id 需要 clean_session=true 且由 broker 分配
+            # An empty client_id requires clean_session=true and a broker-assigned ID
             if clean_session:
                 import uuid
                 client_id = "auto-" + uuid.uuid4().hex[:12]
@@ -524,7 +524,7 @@ class MQTTBroker:
                 writer.close()
                 return None
 
-        # 检查是否已有同名客户端
+        # Check whether a client with the same ID already exists
         existing = self._sessions.get(client_id)
         if existing:
             logger.info("[踢旧] 同名 client=%s 上线，踢掉旧连接", client_id)
@@ -565,7 +565,7 @@ class MQTTBroker:
             password = payload[offset:offset + pwd_len]
             offset += pwd_len
 
-        # 创建会话
+        # Create the session
         client = ClientSession(client_id, reader, writer,
                                clean_session=clean_session,
                                keep_alive=keep_alive)
@@ -577,7 +577,7 @@ class MQTTBroker:
         self._sessions[client_id] = client
         self._clients_connected += 1
 
-        # 发送 CONNACK
+        # Send CONNACK
         session_present = not clean_session
         connack = make_connack(session_present=session_present,
                                return_code=CONNACK_ACCEPTED)
@@ -588,7 +588,7 @@ class MQTTBroker:
 
     async def _dispatch(self, client: ClientSession, packet_type: int,
                         flags: int, payload: bytes):
-        """根据包类型分发处理。"""
+        """Dispatch packet handling based on packet type."""
         match packet_type:
             case 3:  # PUBLISH
                 await self._handle_publish(client, flags, payload)
@@ -607,10 +607,10 @@ class MQTTBroker:
             case 12:  # PINGREQ
                 client.writer.write(make_pingresp())
             case 14:  # DISCONNECT
-                # 客户端主动断开，清除遗嘱
+                # Client disconnected voluntarily; clear the will
                 client.will_topic = None
                 client.will_message = None
-                raise asyncio.IncompleteReadError  # 跳出主循环
+                raise asyncio.IncompleteReadError  # break out of the main loop
             case _:
                 if self.verbose:
                     logger.debug("未处理的包类型: %d", packet_type)
@@ -638,40 +638,40 @@ class MQTTBroker:
             logger.debug("[发布] client=%s topic=%s qos=%d len=%d retain=%s",
                          client.client_id, topic, qos, len(message), retain)
 
-        # 路由给订阅者
+        # Route to subscribers
         self.publish(topic, message, qos=qos, retain=retain, sender=client)
 
-        # QoS 1: 回 PUBACK
+        # QoS 1: reply with PUBACK
         if qos == 1:
             client.writer.write(make_puback(packet_id))
-        # QoS 2: 回 PUBREC，等待 PUBREL
+        # QoS 2: reply with PUBREC and wait for PUBREL
         elif qos == 2:
-            client.pending_in[packet_id] = message  # 暂存
+            client.pending_in[packet_id] = message  # temporarily store
             client.writer.write(make_pubrec(packet_id))
 
     def _handle_puback(self, client: ClientSession, payload: bytes):
-        pass  # QoS 1 完成，无需处理
+        pass  # QoS 1 complete, nothing to handle
 
     def _handle_pubrec(self, client: ClientSession, payload: bytes):
-        """收到 PUBREC → 发送 PUBREL。"""
+        """Received PUBREC → send PUBREL."""
         if len(payload) < 2:
             return
         packet_id = struct.unpack("!H", payload[:2])[0]
         client.writer.write(make_pubrel(packet_id))
 
     def _handle_pubrel(self, client: ClientSession, payload: bytes):
-        """收到 PUBREL → 发送 PUBCOMP，完成 QoS 2。"""
+        """Received PUBREL → send PUBCOMP, completing QoS 2."""
         if len(payload) < 2:
             return
         packet_id = struct.unpack("!H", payload[:2])[0]
-        # 取出暂存消息并发布
+        # Retrieve the stored message and publish it
         msg = client.pending_in.pop(packet_id, None)
         if msg:
-            pass  # 消息已在 PUBLISH 阶段路由，这里只确认
+            pass  # message was already routed during PUBLISH; only acknowledge here
         client.writer.write(make_pubcomp(packet_id))
 
     def _handle_pubcomp(self, client: ClientSession, payload: bytes):
-        pass  # QoS 2 完成
+        pass  # QoS 2 complete
 
     # ── SUBSCRIBE ───────────────────────────────────────────────────
 
@@ -692,7 +692,7 @@ class MQTTBroker:
             granted = self.subscribe(client, topic_filter, req_qos)
             return_codes.append(granted)
 
-            # 发送保留消息
+            # Send retained messages
             self._send_retained(client, topic_filter)
 
         suback = make_suback(packet_id, return_codes)
@@ -712,16 +712,16 @@ class MQTTBroker:
 
         client.writer.write(make_unsuback(packet_id))
 
-    # ── 工具 ────────────────────────────────────────────────────────
+    # ── Utilities ────────────────────────────────────────────────────
 
     async def _drain(self, writer: asyncio.StreamWriter):
-        """等待写缓冲区清空。"""
+        """Wait for the write buffer to drain."""
         try:
             await writer.drain()
         except Exception:
             pass
 
-    # ── 统计 ────────────────────────────────────────────────────────
+    # ── Statistics ───────────────────────────────────────────────────
 
     def _log_stats(self):
         elapsed = time.time() - self._start_time if self._start_time else 0
@@ -736,10 +736,10 @@ class MQTTBroker:
         logger.info("  保留消息数:  %d", len(self._retained))
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
-    # ── 启动 / 停止 ──────────────────────────────────────────────────
+    # ── Startup / shutdown ──────────────────────────────────────────
 
     async def start(self):
-        """启动 broker。"""
+        """Start the broker."""
         self._start_time = time.time()
         self._server = await asyncio.start_server(
             self.handle_client, self.host, self.port
@@ -754,12 +754,12 @@ class MQTTBroker:
         logger.info("══════════════════════════════════════════")
 
     async def stop(self):
-        """停止 broker。"""
+        """Stop the broker."""
         logger.info("正在关闭 broker...")
         if self._server:
             self._server.close()
             await self._server.wait_closed()
-        # 断开所有客户端
+        # Disconnect all clients
         for client in list(self._sessions.values()):
             try:
                 client.writer.close()
@@ -771,7 +771,7 @@ class MQTTBroker:
         logger.info("Broker 已停止")
 
     async def serve_forever(self):
-        """启动并阻塞直到收到停止信号。"""
+        """Start and block until a stop signal is received."""
         await self.start()
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
@@ -780,14 +780,14 @@ class MQTTBroker:
             logger.info("\n收到中断信号...")
             stop_event.set()
 
-        # 注册信号处理（仅在主线程有效）
+        # Register signal handlers (only works in the main thread)
         try:
             loop.add_signal_handler(getattr(__import__("signal"), "SIGINT"),
                                     _signal_handler)
             loop.add_signal_handler(getattr(__import__("signal"), "SIGTERM"),
                                     _signal_handler)
         except (NotImplementedError, RuntimeError):
-            # Windows 下 add_signal_handler 不可用，用 KeyboardInterrupt
+            # add_signal_handler is unavailable on Windows; fall back to KeyboardInterrupt
             pass
 
         try:
@@ -798,15 +798,15 @@ class MQTTBroker:
             await self.stop()
 
 
-# ── 配置 (config.json 的 broker 段) ───────────────────────────────────────
+# ── Configuration (config.json "broker" section) ───────────────────────
 
 def _config_path() -> str:
-    """config.json 在项目根目录（本脚本位于 tools/ 下）。"""
+    """config.json lives in the project root (this script is under tools/)."""
     return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 
 
 def load_config() -> dict:
-    """从 config.json 读取 broker 段，供启动参数做默认值。"""
+    """Read the "broker" section from config.json to provide defaults for startup arguments."""
     try:
         import json
         with open(_config_path(), encoding="utf-8") as f:
@@ -818,7 +818,7 @@ def load_config() -> dict:
 # ── CLI ──────────────────────────────────────────────────────────────────
 
 def main():
-    # 先读 config.json，再被命令行参数覆盖
+    # Read config.json first, then allow command-line arguments to override it
     cfg = load_config()
 
     parser = argparse.ArgumentParser(

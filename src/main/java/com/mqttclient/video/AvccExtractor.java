@@ -3,10 +3,11 @@ package com.mqttclient.video;
 import java.io.ByteArrayOutputStream;
 
 /**
- * 从 Annex-B H.264 字节流中提取 SPS(NAL type 7) 和 PPS(NAL type 8)，
- * 构建 avcC 格式参数集 (ISO/IEC 14496-15)。
+ * Extracts SPS (NAL type 7) and PPS (NAL type 8) from an Annex-B H.264 byte
+ * stream and builds an avcC-format parameter set (ISO/IEC 14496-15).
  *
- * <p>严格对应 Python 版 processor_thread.py 的 _extract_and_convert_avcc。
+ * <p>Strictly corresponds to _extract_and_convert_avcc in the Python
+ * processor_thread.py.
  */
 public final class AvccExtractor {
 
@@ -14,8 +15,8 @@ public final class AvccExtractor {
     }
 
     /**
-     * 查找起始码，返回位置，未找到返回 -1。
-     * 对应 _find_nal_start_code。
+     * Finds a start code, returning its position or -1 if not found.
+     * Corresponds to _find_nal_start_code.
      */
     static int findStartCode(byte[] buf, int start) {
         for (int i = Math.max(0, start); i < buf.length - 3; i++) {
@@ -31,7 +32,7 @@ public final class AvccExtractor {
         return -1;
     }
 
-    /** 去掉 NAL 前的起始码，返回裸 NAL 体。 */
+    /** Strips the start code preceding the NAL, returning the bare NAL body. */
     private static byte[] strip(byte[] nal) {
         if (nal.length >= 4 && nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) {
             byte[] out = new byte[nal.length - 4];
@@ -47,10 +48,11 @@ public final class AvccExtractor {
     }
 
     /**
-     * 从 Annex-B 字节中提取 SPS/PPS，返回 avcC 格式的字节；失败返回 null。
+     * Extracts SPS/PPS from Annex-B bytes, returning the avcC-format bytes, or
+     * null on failure.
      *
-     * @param h264Data Annex-B 格式的 H.264 数据
-     * @return avcC 字节数组，或 null（未同时找到 SPS 和 PPS）
+     * @param h264Data H.264 data in Annex-B format
+     * @return avcC byte array, or null (SPS and PPS not both found)
      */
     public static byte[] extractAvcc(byte[] h264Data) {
         byte[] sps = null;
@@ -100,7 +102,7 @@ public final class AvccExtractor {
         byte[] spsBody = strip(sps);
         byte[] ppsBody = strip(pps);
 
-        // 构建 avcC
+        // Build avcC
         ByteArrayOutputStream avcc = new ByteArrayOutputStream();
         avcc.write(0x01);                       // configurationVersion
         avcc.write(spsBody[1] & 0xFF);          // profile_idc

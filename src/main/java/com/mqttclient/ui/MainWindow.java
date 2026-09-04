@@ -1,429 +1,3 @@
-
-// package com.mqttclient.ui;
-
-// import com.mqttclient.config.Constants;
-// import com.mqttclient.mqtt.MqttReceiver;
-// import com.mqttclient.protobuf.RobotPositionParser;
-// import com.mqttclient.protobuf.gen.RobotPositionProto.RobotPosition;
-// import com.mqttclient.video.VideoProcessor;
-
-// import javax.swing.AbstractAction;
-// import javax.swing.JComponent;
-// import javax.swing.JFrame;
-// import javax.swing.JLayeredPane;
-// import javax.swing.JOptionPane;
-// import javax.swing.JTextArea;
-// import javax.swing.KeyStroke;
-// import javax.swing.SwingUtilities;
-// import javax.swing.Timer;
-// import java.awt.Color;
-// import java.awt.Dimension;
-// import java.awt.Graphics;
-// import java.awt.event.ActionEvent;
-// import java.awt.image.BufferedImage;
-// import java.time.LocalTime;
-// import java.time.format.DateTimeFormatter;
-// import java.util.Random;
-// import java.util.prefs.Preferences;
-
-// /**
-//  * Swing 主窗口 —— 游戏化 HUD 版。
-//  *
-//  * <p>视频画面铺满整窗作为背景，其余 UI 均为漂浮其上的半透明叠加层：
-//  * <ul>
-//  *   <li><b>ESC</b> —— 弹出 / 收起控制菜单（{@link ControlMenuOverlay}）</li>
-//  *   <li><b>F3</b> —— 临时切换调试数据 HUD（{@link DebugOverlay}）</li>
-//  *   <li><b>F4</b> —— 锁定 / 解锁调试数据常驻显示，并持久化到 {@link Preferences}</li>
-//  * </ul>
-//  *
-//  * <p>MQTT 连接、解码、统计等业务逻辑与非 HUD 版一致，仅呈现方式改为写入
-//  * 叠加层的数据模型后重绘。
-//  */
-// public class MainWindow extends JFrame {
-
-//     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
-//     private static final String PREF_DEBUG_PINNED = "debugPinned";
-
-//     // 叠加层
-//     private final VideoPanel videoPanel = new VideoPanel();
-//     private final DebugOverlay debugOverlay = new DebugOverlay();
-//     private final MinimapOverlay minimapOverlay = new MinimapOverlay();
-//     private final ControlMenuOverlay controlMenu = new ControlMenuOverlay();
-//     private final JTextArea logArea;
-
-//     // 分层容器
-//     private HudRoot layeredPane;
-
-//     // HUD 显隐状态
-//     private boolean menuVisible = false;
-//     private boolean debugTemp = false;   // F3 临时
-//     private boolean debugPinned;         // F4 常驻（持久化）
-
-//     // 状态
-//     private MqttReceiver mqtt;
-//     private VideoProcessor processor;
-//     private volatile boolean connected = false;
-//     private String clientId = "";
-//     private Timer renderTimer;
-
-//     private final Preferences prefs = Preferences.userNodeForPackage(MainWindow.class);
-
-//     public MainWindow() {
-//         setTitle("MQTT H.264 视频接收器 (Java)");
-//         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-//         setSize(1200, 900);
-//         setLocationRelativeTo(null);
-
-//         logArea = debugOverlay.getLogArea();
-//         debugPinned = prefs.getBoolean(PREF_DEBUG_PINNED, false);
-
-//         initUi();
-//         installKeyBindings();
-//         wireControlMenu();
-
-//         addWindowListener(new java.awt.event.WindowAdapter() {
-//             @Override
-//             public void windowClosing(java.awt.event.WindowEvent e) {
-//                 onClose();
-//             }
-//         });
-
-//         // 初始显隐
-//         debugOverlay.setPinned(debugPinned);
-//         refreshOverlayVisibility();
-
-//         appendLog("程序启动，等待 MQTT 连接...");
-//         appendLog("按键: ESC=控制菜单  F3=调试数据  F4=常驻显示");
-//         // 启动后弹出客户端 ID 输入框
-//         SwingUtilities.invokeLater(this::askClientId);
-//     }
-
-//     private void initUi() {
-//         layeredPane = new HudRoot();
-
-//         videoPanel.setBackground(Color.BLACK);
-//         debugOverlay.setVisible(false);
-//         controlMenu.setVisible(false);
-
-//         layeredPane.add(videoPanel, JLayeredPane.DEFAULT_LAYER);
-//         layeredPane.add(minimapOverlay, JLayeredPane.PALETTE_LAYER);
-//         layeredPane.add(debugOverlay, JLayeredPane.PALETTE_LAYER);
-//         layeredPane.add(controlMenu, JLayeredPane.MODAL_LAYER);
-
-//         loadFieldMap();
-
-//         setContentPane(layeredPane);
-//     }
-//     /** 加载自定义背景地图。 */
-//     private void loadFieldMap() {
-//         try {
-//             java.awt.image.BufferedImage bg = javax.imageio.ImageIO.read(
-//                     getClass().getResource("/maps/field.png"));
-
-//             MinimapOverlay.MapModel map = new MinimapOverlay.MapModel(
-//                     "我的场地",  
-//                     28.0,      
-//                     15.0,     
-//                     0.0, 0.0,   
-//                     false,    
-//                     0.0,        
-//                     bg);       
-//             minimapOverlay.setMap(map);
-//             appendLog("已加载自定义地图");
-//         } catch (Exception e) {
-//             appendLog("地图加载失败，使用默认矩形: " + e.getMessage());
-//         }
-//     }
-//     /** 全窗口范围的按键绑定，避免焦点在子组件上时失效。 */
-//     private void installKeyBindings() {
-//         JComponent root = getRootPane();
-//         var im = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
-//         var am = root.getActionMap();
-
-//         im.put(KeyStroke.getKeyStroke("ESCAPE"), "toggleMenu");
-//         im.put(KeyStroke.getKeyStroke("F3"), "toggleDebug");
-//         im.put(KeyStroke.getKeyStroke("F4"), "togglePinned");
-
-//         am.put("toggleMenu", new AbstractAction() {
-//             @Override
-//             public void actionPerformed(ActionEvent e) {
-//                 toggleControlMenu();
-//             }
-//         });
-//         am.put("toggleDebug", new AbstractAction() {
-//             @Override
-//             public void actionPerformed(ActionEvent e) {
-//                 toggleDebugTemp();
-//             }
-//         });
-//         am.put("togglePinned", new AbstractAction() {
-//             @Override
-//             public void actionPerformed(ActionEvent e) {
-//                 toggleDebugPinned();
-//             }
-//         });
-//     }
-
-//     private void wireControlMenu() {
-//         controlMenu.btnConnect.addActionListener(e -> onConnect());
-//         controlMenu.btnDisconnect.addActionListener(e -> onDisconnect());
-//         controlMenu.btnStart.addActionListener(e -> onStart());
-//         controlMenu.btnStop.addActionListener(e -> onStop());
-//         controlMenu.btnClearLog.addActionListener(e -> {
-//             logArea.setText("");
-//             appendLog("日志已清空");
-//         });
-//         controlMenu.btnChangeId.addActionListener(e -> onChangeClientId());
-//         controlMenu.setOnScrimClick(this::toggleControlMenu);
-
-//         controlMenu.btnDisconnect.setEnabled(false);
-//         controlMenu.btnStart.setEnabled(false);
-//         controlMenu.btnStop.setEnabled(false);
-//     }
-
-//     // ==== HUD 显隐 ====
-
-//     private void toggleControlMenu() {
-//         menuVisible = !menuVisible;
-//         controlMenu.setVisible(menuVisible);
-//         if (menuVisible) {
-//             controlMenu.repaint();
-//         }
-//     }
-
-//     private void toggleDebugTemp() {
-//         debugTemp = !debugTemp;
-//         refreshOverlayVisibility();
-//     }
-
-//     private void toggleDebugPinned() {
-//         debugPinned = !debugPinned;
-//         prefs.putBoolean(PREF_DEBUG_PINNED, debugPinned);
-//         debugOverlay.setPinned(debugPinned);
-//         refreshOverlayVisibility();
-//         appendLog("调试数据常驻显示: " + (debugPinned ? "开启" : "关闭"));
-//     }
-
-//     private void refreshOverlayVisibility() {
-//         debugOverlay.setVisible(debugTemp || debugPinned);
-//     }
-
-//     // ==== 按钮逻辑 ====
-
-//     private void onConnect() {
-//         if (clientId == null || clientId.isEmpty()) {
-//             appendLog("客户端 ID 未设置，请重新输入");
-//             askClientId();
-//             return;
-//         }
-//         appendLog("正在连接 MQTT 服务器...");
-//         controlMenu.btnConnect.setEnabled(false);
-
-//         mqtt = new MqttReceiver(Constants.DEFAULT_BROKER_HOST, Constants.DEFAULT_BROKER_PORT, clientId);
-//         mqtt.setConnectionStatusListener((ok, msg) ->
-//                 SwingUtilities.invokeLater(() -> onMqttStatusChanged(ok, msg)));
-//         mqtt.setRobotPositionListener(this::onRobotPosition);
-
-//         if (mqtt.connect()) {
-//             appendLog("MQTT 连接请求已发送，等待确认...");
-//         } else {
-//             appendLog("MQTT 连接请求失败，请检查网络");
-//             controlMenu.btnConnect.setEnabled(true);
-//         }
-//     }
-
-//     private void onMqttStatusChanged(boolean ok, String message) {
-//         connected = ok;
-//         debugOverlay.setConnected(ok);
-//         if (ok) {
-//             setStatus("已连接 - 等待视频数据");
-//             controlMenu.btnDisconnect.setEnabled(true);
-//             controlMenu.btnStart.setEnabled(true);
-//             appendLog("MQTT 连接成功");
-//         } else {
-//             setStatus("连接失败/已断开");
-//             controlMenu.btnConnect.setEnabled(true);
-//             controlMenu.btnDisconnect.setEnabled(false);
-//             controlMenu.btnStart.setEnabled(false);
-//             appendLog("MQTT " + message);
-//         }
-//     }
-
-//     /** 收到机器人位置（Paho 线程）：解析 protobuf 并在 EDT 上刷新小地图。 */
-//     private void onRobotPosition(byte[] payload) {
-//         try {
-//             RobotPosition pos = RobotPositionParser.parsePayload(payload);
-//             double x = pos.getX();
-//             double y = pos.getY();
-//             double yaw = pos.getYaw();
-//             SwingUtilities.invokeLater(() -> minimapOverlay.setRobotPosition(x, y, yaw));
-//         } catch (Exception e) {
-//             SwingUtilities.invokeLater(() -> appendLog("机器人位置解析失败: " + e.getMessage()));
-//         }
-//     }
-
-//     private void onDisconnect() {
-//         onStop();
-//         if (mqtt != null) {
-//             mqtt.disconnect();
-//             mqtt = null;
-//         }
-//         connected = false;
-//         debugOverlay.setConnected(false);
-//         setStatus("已断开");
-//         controlMenu.btnConnect.setEnabled(true);
-//         controlMenu.btnDisconnect.setEnabled(false);
-//         controlMenu.btnStart.setEnabled(false);
-//         appendLog("MQTT 连接已断开");
-//     }
-
-//     private void onStart() {
-//         if (!connected || mqtt == null) {
-//             appendLog("请先连接 MQTT");
-//             return;
-//         }
-//         processor = new VideoProcessor(mqtt);
-//         processor.setStatusListener(msg -> SwingUtilities.invokeLater(() -> appendLog(msg)));
-//         processor.setStatsListener((packets, frames, decodeFps, displayFps, lost) ->
-//                 SwingUtilities.invokeLater(() -> debugOverlay.setStats(String.format(
-//                         "包: %d | 帧: %d | 解码FPS: %.1f | 显示FPS: %.1f | 丢包: %d",
-//                         packets, frames, decodeFps, displayFps, lost))));
-//         processor.start();
-
-//         // 渲染定时器：定时取最新帧刷新显示（对应 QTimer）
-//         renderTimer = new Timer(Constants.RENDER_INTERVAL_MS, e -> {
-//             BufferedImage frame = processor.takeLatestFrameForRender();
-//             if (frame != null) {
-//                 videoPanel.setImage(frame);
-//             }
-//         });
-//         renderTimer.start();
-
-//         controlMenu.btnStart.setEnabled(false);
-//         controlMenu.btnStop.setEnabled(true);
-//         setStatus("解码中...");
-//         appendLog("视频处理线程已启动");
-//     }
-
-//     private void onStop() {
-//         if (renderTimer != null) {
-//             renderTimer.stop();
-//             renderTimer = null;
-//         }
-//         if (processor != null) {
-//             processor.stopProcessor();
-//             processor = null;
-//         }
-//         controlMenu.btnStart.setEnabled(connected);
-//         controlMenu.btnStop.setEnabled(false);
-//         setStatus("解码已停止");
-//         appendLog("视频处理线程已停止");
-//     }
-
-//     private void onChangeClientId() {
-//         if (connected) {
-//             appendLog("无法修改客户端 ID：当前已连接，请先断开");
-//             return;
-//         }
-//         String input = JOptionPane.showInputDialog(this,
-//                 "请输入新的客户端 ID（留空则自动生成）:", clientId);
-//         if (input != null) {
-//             clientId = input.trim().isEmpty() ? generateClientId() : input.trim();
-//             debugOverlay.setClientId(clientId);
-//             appendLog("客户端 ID 已更新为: " + clientId);
-//         }
-//     }
-
-//     private void askClientId() {
-//         String input = JOptionPane.showInputDialog(this,
-//                 "请输入客户端 ID（留空则自动生成）:", "");
-//         clientId = (input == null || input.trim().isEmpty()) ? generateClientId() : input.trim();
-//         debugOverlay.setClientId(clientId);
-//         appendLog("客户端 ID: " + clientId);
-//     }
-
-//     private String generateClientId() {
-//         return "h264_recv_" + (System.currentTimeMillis() / 1000) + "_" + (100 + new Random().nextInt(900));
-//     }
-
-//     // ==== 显示与日志 ====
-
-//     private void setStatus(String text) {
-//         debugOverlay.setStatus(text);
-//     }
-
-//     private void appendLog(String message) {
-//         String ts = LocalTime.now().format(TIME_FMT);
-//         logArea.append("[" + ts + "] " + message + "\n");
-//         logArea.setCaretPosition(logArea.getDocument().getLength());
-//     }
-
-//     private void onClose() {
-//         appendLog("正在关闭程序...");
-//         onStop();
-//         if (mqtt != null) {
-//             mqtt.disconnect();
-//         }
-//         dispose();
-//         System.exit(0);
-//     }
-
-//     /** 分层根容器：让所有叠加层始终铺满窗口。 */
-//     private static class HudRoot extends JLayeredPane {
-//         @Override
-//         public void doLayout() {
-//             int w = getWidth();
-//             int h = getHeight();
-//             for (java.awt.Component c : getComponents()) {
-//                 c.setBounds(0, 0, w, h);
-//             }
-//         }
-//     }
-
-//     /** 视频显示面板：按比例缩放居中绘制最新帧。 */
-//     private static class VideoPanel extends javax.swing.JPanel {
-//         private BufferedImage image;
-
-//         VideoPanel() {
-//             setOpaque(true);
-//             setBackground(Color.BLACK);
-//         }
-
-//         void setImage(BufferedImage img) {
-//             this.image = img;
-//             repaint();
-//         }
-
-//         @Override
-//         protected void paintComponent(Graphics g) {
-//             super.paintComponent(g);
-//             if (image == null) {
-//                 g.setColor(new Color(0x9e9e9e));
-//                 String text = "等待视频流...";
-//                 int tw = g.getFontMetrics().stringWidth(text);
-//                 g.drawString(text, (getWidth() - tw) / 2, getHeight() / 2);
-//                 return;
-//             }
-//             // 保持宽高比缩放
-//             int pw = getWidth() - 20;
-//             int ph = getHeight() - 20;
-//             double scale = Math.min((double) pw / image.getWidth(), (double) ph / image.getHeight());
-//             int dw = (int) (image.getWidth() * scale);
-//             int dh = (int) (image.getHeight() * scale);
-//             int x = (getWidth() - dw) / 2;
-//             int y = (getHeight() - dh) / 2;
-//             g.drawImage(image, x, y, dw, dh, this);
-//         }
-
-//         @Override
-//         public Dimension getPreferredSize() {
-//             return new Dimension(600, 500);
-//         }
-//     }
-// }
-
-
-
 package com.mqttclient.ui;
 
 import com.mqttclient.config.Constants;
@@ -460,47 +34,48 @@ import java.util.Random;
 import java.util.prefs.Preferences;
 
 /**
- * Swing 主窗口 —— 游戏化 HUD 版。
+ * Swing main window -- game-style HUD version.
  *
- * <p>视频画面铺满整窗作为背景，其余 UI 均为漂浮其上的半透明叠加层：
+ * <p>The video fills the entire window as the background; all other UI is drawn on top as
+ * semi-transparent overlays:
  * <ul>
- *   <li><b>ESC</b> —— 弹出 / 收起控制菜单（{@link ControlMenuOverlay}）</li>
- *   <li><b>F3</b> —— 临时切换调试数据 HUD（{@link DebugOverlay}）</li>
- *   <li><b>F4</b> —— 锁定 / 解锁调试数据常驻显示，并持久化到 {@link Preferences}</li>
+ *   <li><b>ESC</b> -- show / hide the control menu ({@link ControlMenuOverlay})</li>
+ *   <li><b>F3</b> -- temporarily toggle the debug HUD ({@link DebugOverlay})</li>
+ *   <li><b>F4</b> -- pin / unpin the debug HUD and persist the state to {@link Preferences}</li>
  * </ul>
  *
- * <p>MQTT 连接、解码、统计等业务逻辑与非 HUD 版一致，仅呈现方式改为写入
- * 叠加层的数据模型后重绘。
+ * <p>MQTT connection, decoding, and statistics logic is the same as in the non-HUD version; only the
+ * presentation changes, by writing into overlay data models and repainting.
  */
 public class MainWindow extends JFrame {
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss.SSS");
     private static final String PREF_DEBUG_PINNED = "debugPinned";
 
-    // 叠加层
+    // Overlays
     private final VideoPanel videoPanel = new VideoPanel();
     private final DebugOverlay debugOverlay = new DebugOverlay();
     private final MinimapOverlay minimapOverlay = new MinimapOverlay();
     private final ControlMenuOverlay controlMenu = new ControlMenuOverlay();
     private final StatBarOverlay statBar = new StatBarOverlay();
     private final PingAlertOverlay pingAlertOverlay = new PingAlertOverlay();
-    private PingChannel pingChannel;   // 客户端直连标点广播（UDP，无 broker）
+    private PingChannel pingChannel;   // Direct client-to-client ping broadcast (UDP, no broker)
     private final JTextArea logArea;
 
-    // 分层容器
+    // Layered container
     private HudRoot layeredPane;
 
-    // HUD 显隐状态
+    // HUD visibility state
     private boolean menuVisible = false;
-    private boolean debugTemp = false;   // F3 临时
-    private boolean debugPinned;         // F4 常驻（持久化）
+    private boolean debugTemp = false;   // F3 temporary
+    private boolean debugPinned;         // F4 pinned (persisted)
 
-    // 状态
+    // State
     private MqttReceiver mqtt;
     private VideoStreamProcessor processor;
     private UdpVideoProcessor udpProcessor;
     private volatile boolean connected = false;
-    private volatile boolean udpActive = false;   // true=UDP, false=MQTT
+    private volatile boolean udpActive = false;   // true = UDP, false = MQTT
     private String clientId = "";
     private Timer renderTimer;
 
@@ -527,11 +102,11 @@ public class MainWindow extends JFrame {
             }
         });
 
-        // 初始显隐
+        // Initial visibility
         debugOverlay.setPinned(debugPinned);
         refreshOverlayVisibility();
 
-        // 启动客户端直连标点通道（UDP 广播，无需 MQTT broker）
+        // Start the direct ping channel (UDP broadcast, no MQTT broker needed)
         startPingChannel();
 
         appendLog("程序启动，等待 MQTT 连接...");
@@ -539,7 +114,7 @@ public class MainWindow extends JFrame {
         appendLog("配置从 config.json 读取，修改后自动热重载 (F5 手动重载)");
         appendLog("小地图: 左键单击地图=标点，点击标题栏=全屏/还原，拖手柄或滚轮=缩放");
         appendLog("左下角状态面板: 显示机器人类型·等级·血量·热量·经验");
-        // 启动后弹出客户端 ID 输入框
+        // Show the client ID input dialog after startup
         SwingUtilities.invokeLater(this::askClientId);
     }
 
@@ -556,9 +131,10 @@ public class MainWindow extends JFrame {
         layeredPane.add(statBar, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(pingAlertOverlay, JLayeredPane.PALETTE_LAYER);
         layeredPane.add(controlMenu, JLayeredPane.MODAL_LAYER);
-        // 小地图需要接收鼠标（拖动缩放 / 双击全屏 / 单击标点），置于调试 HUD 之上以优先命中
+        // The minimap must receive mouse input (drag to zoom / double-click fullscreen / click to ping),
+        // so keep it above the debug HUD to get priority hits.
         layeredPane.moveToFront(minimapOverlay);
-        // 标点横幅不拦截鼠标，置顶绘制但点击穿透
+        // The ping banner does not intercept the mouse; drawn on top but click-through.
         layeredPane.moveToFront(pingAlertOverlay);
 
         loadFieldMap();
@@ -572,13 +148,13 @@ public class MainWindow extends JFrame {
                     getClass().getResource("/maps/field.png"));
 
             MinimapOverlay.MapModel map = new MinimapOverlay.MapModel(
-                    " ",  
-                    28.0,      
-                    15.0,     
-                    0.0, 0.0,   
-                    false,    
-                    0.0,        
-                    bg);       
+                    " ",
+                    28.0,
+                    15.0,
+                    0.0, 0.0,
+                    false,
+                    0.0,
+                    bg);
             minimapOverlay.setMap(map);
             appendLog("已加载自定义地图");
         } catch (Exception e) {
@@ -586,7 +162,7 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** 全窗口范围的按键绑定，避免焦点在子组件上时失效。 */
+    /** Whole-window key bindings so they stay active even when a child component has focus. */
     private void installKeyBindings() {
         JComponent root = getRootPane();
         var im = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
@@ -597,11 +173,11 @@ public class MainWindow extends JFrame {
         im.put(KeyStroke.getKeyStroke("F4"), "togglePinned");
         im.put(KeyStroke.getKeyStroke("F5"), "reloadConfig");
 
-        // F3 按住显示调试，松手消失
+        // F3 held down shows the debug panel; releasing it hides the panel
         im.put(KeyStroke.getKeyStroke("F3"), "showDebug");
         im.put(KeyStroke.getKeyStroke("released F3"), "hideDebug");
 
-        // 控制面板快捷键：数字 1~6 直接触发，无需先按 ESC
+        // Control panel shortcuts: digits 1-6 trigger actions directly, no need to press ESC first
         im.put(KeyStroke.getKeyStroke("0"), "switchSource");
         im.put(KeyStroke.getKeyStroke("1"), "cmdConnect");
         im.put(KeyStroke.getKeyStroke("2"), "cmdDisconnect");
@@ -610,7 +186,7 @@ public class MainWindow extends JFrame {
         im.put(KeyStroke.getKeyStroke("5"), "cmdClearLog");
         im.put(KeyStroke.getKeyStroke("6"), "cmdChangeId");
 
-        // 小地图缩放：+ / = 放大，- / _ 缩小（含小键盘）
+        // Minimap zoom: + / = zoom in, - / _ zoom out (including numpad)
         im.put(KeyStroke.getKeyStroke("typed +"), "minimapZoomIn");
         im.put(KeyStroke.getKeyStroke("typed ="), "minimapZoomIn");
         im.put(KeyStroke.getKeyStroke("typed -"), "minimapZoomOut");
@@ -723,7 +299,7 @@ public class MainWindow extends JFrame {
         controlMenu.btnStop.setEnabled(false);
     }
 
-    // ==== HUD 显隐 ====
+    // ==== HUD visibility ====
 
     private void toggleControlMenu() {
         menuVisible = !menuVisible;
@@ -733,13 +309,13 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** F3 按下 → 显示调试面板。 */
+    /** F3 pressed -> show the debug panel. */
     private void showDebug() {
         debugTemp = true;
         refreshOverlayVisibility();
     }
 
-    /** F3 松开 → 隐藏调试面板（除非已 F4 锁定）。 */
+    /** F3 released -> hide the debug panel (unless pinned with F4). */
     private void hideDebug() {
         debugTemp = false;
         refreshOverlayVisibility();
@@ -757,7 +333,7 @@ public class MainWindow extends JFrame {
         debugOverlay.setVisible(debugTemp || debugPinned);
     }
 
-    // ==== 按钮逻辑 ====
+    // ==== Button logic ====
 
     private void onConnect() {
         if (clientId == null || clientId.isEmpty()) {
@@ -800,13 +376,14 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** 启动客户端直连标点通道（UDP 广播，无 broker、无 protobuf），并接线小地图点击。 */
+    /** Starts the direct ping channel (UDP broadcast, no broker / no protobuf) and wires up minimap clicks. */
     private void startPingChannel() {
         pingChannel = new PingChannel(Constants.PING_PORT, Constants.PING_BROADCAST_ADDR,
                 this::onPingReceived);
         pingChannel.start();
 
-        // 点击小地图 → UDP 广播标点（同一以太网所有客户端都能收到）+ 本地立即显示
+        // Clicking the minimap -> broadcast a ping over UDP (received by all clients on the same
+        // Ethernet) plus show it locally immediately
         minimapOverlay.setOnPingListener((x, y) -> {
             if (pingChannel != null) {
                 pingChannel.broadcastPing(x.floatValue(), y.floatValue(), clientId);
@@ -817,7 +394,7 @@ public class MainWindow extends JFrame {
         });
     }
 
-    /** 收到标点（PingChannel 接收线程）：切到 EDT 显示波纹 + 提醒横幅。 */
+    /** Handles an incoming ping (PingChannel receiver thread): switches to the EDT to show the ripple + alert banner. */
     private void onPingReceived(PingMessage ping) {
         float x = ping.x();
         float y = ping.y();
@@ -828,7 +405,7 @@ public class MainWindow extends JFrame {
         });
     }
 
-    /** 收到机器人位置（Paho 线程）：解析 protobuf 并在 EDT 上刷新小地图。 */
+    /** Handles an incoming robot position (Paho thread): parses protobuf and refreshes the minimap on the EDT. */
     private void onRobotPosition(byte[] payload) {
         try {
             RobotPosition pos = RobotPositionParser.parsePayload(payload);
@@ -842,7 +419,7 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** 收到机器人静态状态（Paho 线程）：解析 protobuf 并在 EDT 刷新状态面板。 */
+    /** Handles an incoming static robot status (Paho thread): parses protobuf and refreshes the status panel on the EDT. */
     private void onRobotStaticStatus(byte[] payload) {
         try {
             RobotStaticStatus s = RobotStatusParser.parseStaticStatus(payload);
@@ -857,7 +434,7 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** 收到机器人动态状态（Paho 线程）：解析 protobuf 并在 EDT 刷新状态面板。 */
+    /** Handles an incoming dynamic robot status (Paho thread): parses protobuf and refreshes the status panel on the EDT. */
     private void onRobotDynamicStatus(byte[] payload) {
         try {
             RobotDynamicStatus d = RobotStatusParser.parseDynamicStatus(payload);
@@ -949,9 +526,9 @@ public class MainWindow extends JFrame {
         appendLog("UDP 视频处理线程已启动 (" + Constants.UDP_HOST + ":" + Constants.UDP_PORT + ")");
     }
 
-    /** 切换 MQTT ↔ UDP 视频源。 */
+    /** Switches the video source between MQTT and UDP. */
     private void switchVideoSource() {
-        // 停止当前处理器
+        // Stop the current processor
         if (renderTimer != null) {
             renderTimer.stop();
             renderTimer = null;
@@ -978,7 +555,7 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** 重新加载 config.json（F5 或控制菜单"重载配置"）。 */
+    /** Reloads config.json (F5 or the "Reload Config" menu action). */
     private void onReloadConfig() {
         Constants.reload();
         appendLog("配置已重新加载");
@@ -986,7 +563,7 @@ public class MainWindow extends JFrame {
         appendLog("提示: MQTT 连接参数需重连生效；UDP/缓冲/分辨率参数需停止后再启动生效");
     }
 
-    /** 后台监听 config.json 变化，自动热重载（每 2 秒轮询一次修改时间）。 */
+    /** Watches config.json in the background and hot-reloads on changes (polls the mtime every 2 seconds). */
     private void startConfigWatcher() {
         Thread watcher = new Thread(() -> {
             long last = Config.lastModified();
@@ -1048,7 +625,7 @@ public class MainWindow extends JFrame {
         return "h264_recv_" + (System.currentTimeMillis() / 1000) + "_" + (100 + new Random().nextInt(900));
     }
 
-    // ==== 显示与日志 ====
+    // ==== Display and logging ====
 
     private void setStatus(String text) {
         debugOverlay.setStatus(text);
@@ -1077,7 +654,7 @@ public class MainWindow extends JFrame {
         System.exit(0);
     }
 
-    /** 分层根容器：让所有叠加层始终铺满窗口。 */
+    /** Layered root container: keeps every overlay stretched to fill the window. */
     private static class HudRoot extends JLayeredPane {
         @Override
         public void doLayout() {
@@ -1089,7 +666,7 @@ public class MainWindow extends JFrame {
         }
     }
 
-    /** 视频显示面板：按比例缩放居中绘制最新帧。 */
+    /** Video display panel: draws the latest frame centered and aspect-ratio-preserving. */
     private static class VideoPanel extends javax.swing.JPanel {
         private BufferedImage image;
 
@@ -1113,7 +690,7 @@ public class MainWindow extends JFrame {
                 g.drawString(text, (getWidth() - tw) / 2, getHeight() / 2);
                 return;
             }
-            // 保持宽高比缩放
+            // Scale while preserving the aspect ratio
             int pw = getWidth() - 20;
             int ph = getHeight() - 20;
             double scale = Math.min((double) pw / image.getWidth(), (double) ph / image.getHeight());
